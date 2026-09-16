@@ -1,0 +1,8 @@
+{
+  "parts": [
+    { "is_public": false, "regex_def": "(\r\n|^)to:" },
+    { "is_public": false, "regex_def": "[^@\r\n]*claim\\+" },
+    { "is_public": true,  "regex_def": "[0-9a-f]{32}" },
+    { "is_public": false, "regex_def": "@relay\\.xyz" }
+  ]
+}
