@@ -22,4 +22,26 @@ pub mod email_wallet {
     ) -> Result<()> {
         instructions::create_escrow(ctx, commitment, escrow_id, amount)
     }
+
+    pub fn initialize_registry(ctx: Context<InitializeRegistry>, authority: Pubkey) -> Result<()> {
+        instructions::initialize_registry(ctx, authority)
+    }
+
+    pub fn registry_upsert(
+        ctx: Context<RegistryUpsert>,
+        domain_commitment: [u8; 32],
+        selector: String,
+        pubkey_hash: [u8; 32],
+        expires_at: i64,
+    ) -> Result<()> {
+        instructions::registry_upsert(ctx, domain_commitment, selector, pubkey_hash, expires_at)
+    }
+
+    pub fn registry_revoke(
+        ctx: Context<RegistryRevoke>,
+        domain_commitment: [u8; 32],
+        selector: String,
+    ) -> Result<()> {
+        instructions::registry_revoke(ctx, domain_commitment, selector)
+    }
 }
