@@ -1,0 +1,7 @@
+node_modules/
+circuits/build/
+onchain/target/
+onchain/test-ledger/
+onchain/.anchor/
+.worktrees/
+superpowers/
