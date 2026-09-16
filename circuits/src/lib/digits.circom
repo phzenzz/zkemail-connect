@@ -25,7 +25,8 @@ template Digit2IntStrict(N) {
         seenZero[i + 1] <== seenZero[i] + isZero[i].out - seenZero[i] * isZero[i].out;
         // digit = in - 48 for digits, 0 for zero-padding; written linearly to stay quadratic
         digit[i] <== in[i] - 48 + 48 * isZero[i].out;
-        sums[i + 1] <== sums[i] * 10 + digit[i];
+        // accumulate ×10 on digit bytes only; on zero padding hold the value (isZero.out ∈ {0,1})
+        sums[i + 1] <== sums[i] * 10 - sums[i] * 9 * isZero[i].out + digit[i];
     }
     // first byte must be a digit (isDigit[0] == 1)
     (1 - isDigit[0]) === 0;
