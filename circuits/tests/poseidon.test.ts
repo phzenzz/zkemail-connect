@@ -1,5 +1,5 @@
 import { expect, test } from "@jest/globals";
-import { packBytesLE, computeCommitment, computeDomainCommitment, computeNullifier, escrowIdToField, relayerToField } from "../scripts/poseidon";
+import { packBytesLE, computeCommitment, computeDomainCommitment, computeNullifier, computePubkeyHash, escrowIdToField, relayerToField } from "../scripts/poseidon";
 
 test("packBytesLE: 31 bytes per chunk, little-endian, zero pad", () => {
   const chunks = packBytesLE(new Uint8Array([1, 2, 3]), 62); // 2 chunks
@@ -30,4 +30,20 @@ test("computeNullifier / computeDomainCommitment: stable shape", async () => {
   const d = await computeDomainCommitment("test.com");
   expect(typeof n).toBe("bigint");
   expect(d).toBeGreaterThan(0n);
+});
+
+test("computePubkeyHash: 2048-bit modulus (odd limb count, unpaired top limb)", async () => {
+  const h = await computePubkeyHash((1n << 2048n) - 1n);
+  expect(typeof h).toBe("bigint");
+  expect(h).toBeGreaterThan(0n);
+});
+
+test("computePubkeyHash: deterministic, distinct per modulus", async () => {
+  const m1 = (1n << 2048n) - 1n;
+  const m2 = (1n << 2047n) - 1n;
+  const a = await computePubkeyHash(m1);
+  const b = await computePubkeyHash(m1);
+  const c = await computePubkeyHash(m2);
+  expect(a).toBe(b);
+  expect(a).not.toBe(c);
 });

@@ -53,7 +53,7 @@ export async function computePubkeyHash(modulus: bigint): Promise<bigint> {
   const mask = (1n << 121n) - 1n;
   for (let i = 0; i < 17; i++) { limbs.push(rem & mask); rem >>= 121n; }
   const merged: bigint[] = [];
-  for (let i = 0; i < 9; i++) merged.push(limbs[2 * i] + (limbs[2 * i + 1] << 121n));
+  for (let i = 0; i < 9; i++) merged.push(limbs[2 * i] + ((limbs[2 * i + 1] ?? 0n) << 121n));
   return poseidonHash(merged);
 }
 
