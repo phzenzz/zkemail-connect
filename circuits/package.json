@@ -1,6 +1,9 @@
 {
   "name": "circuits",
   "private": true,
+  "scripts": {
+    "test": "NODE_OPTIONS=--max-old-space-size=16384 jest --runInBand"
+  },
   "jest": { "preset": "ts-jest", "testEnvironment": "node" },
   "dependencies": {
     "@zk-email/circuits": "6.3.4",
