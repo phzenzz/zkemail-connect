@@ -1,0 +1,18 @@
+{
+  "name": "zkemail-solana-connect",
+  "private": true,
+  "workspaces": ["circuits"],
+  "scripts": {
+    "circuit:compile": "bash circuits/scripts/compile.sh",
+    "circuit:setup": "bash circuits/scripts/setup.sh",
+    "circuit:test": "cd circuits && npx jest tests/claim.test.ts --runInBand",
+    "prover:up": "docker compose up -d --build prover",
+    "prover:down": "docker compose down",
+    "e2e": "npx tsx e2e/e2e.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}
