@@ -6,9 +6,10 @@ const ART = process.env.ARTIFACTS_DIR ?? "/artifacts";
 const PORT = Number(process.env.PORT ?? 8080);
 const WASM = `${ART}/claim_js/claim.wasm`;
 const WITNESS_GEN = `${ART}/claim_js/generate_witness.js`;
+const WITNESS_CALC = `${ART}/claim_js/witness_calculator.js`;
 const ZKEY = `${ART}/claim_final.zkey`;
 
-for (const f of [WASM, WITNESS_GEN, ZKEY]) {
+for (const f of [WASM, WITNESS_GEN, WITNESS_CALC, ZKEY]) {
   if (!fs.existsSync(f)) { console.error(`missing artifact: ${f}`); process.exit(1); }
 }
 
@@ -34,6 +35,12 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && req.url === "/prove") {
     const chunks: Buffer[] = [];
     req.on("data", (c) => chunks.push(c));
+    req.on("error", (e) => {
+      // 客户端中断/ socket 错误：未发送头部则回 400，否则仅记录并断开，不能让进程崩掉
+      console.error(`[prover] request error: ${String((e as Error)?.message ?? e)}`);
+      if (!res.headersSent) { res.statusCode = 400; res.end(String((e as Error)?.message ?? e)); }
+      else res.destroy();
+    });
     req.on("end", () => {
       queue = queue.then(() => {
         try {
