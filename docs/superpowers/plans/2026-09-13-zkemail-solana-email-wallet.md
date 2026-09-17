@@ -47,6 +47,7 @@
 5. **测试邮件**：To 一律 `claim@relay.xyz`（不再需要 32 位 hex id）；Subject 仍为 base58 地址；导出方式不变（新邮件 + Bcc 自己，收件箱导出原件）。
 6. **转换/生成脚本**：`convertProofForSolana` 断言 7 个公开信号；`gen-vk-rust.mjs` 断言 nPub===7、IC 8 个；`prove-for.ts` 参数去掉 escrowIdHex。
 7. **Trusted setup**：pot22_final.ptau（Hermez 仪式，Wayback 快照，4.8GB）**复用**——电路变更只需重跑 `groth16 setup` + `zkey export verificationkey` + `gen-vk-rust.mjs`（约 5 分钟），不需重新生成/下载 ptau。
+8. **Relay 地址可配置（v1.5.1）**：系统邮箱地址集中于 `circuits/relay.config.json`（`{"relayAddress": "claim@relay.xyz"}`，支持环境变量 `RELAY_ADDRESS` 覆盖）。ToPresenceRegex 的正则规格、`load-email.ts` 的 To 校验、e2e/测试邮件指引全部从该配置读取。**该地址编译进电路 DFA**：改配置后必须按顺序重跑 生成正则 → `compile.sh` → `groth16 setup` → `gen-vk-rust.mjs` → 拷贝 verifying_key.rs（一条脚本串起来，见 compile.sh 头部注释）。正则中地址需转义（`.` → `\.`）。
 
 ## File Structure
 
