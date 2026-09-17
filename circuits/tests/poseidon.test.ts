@@ -1,16 +1,11 @@
 import { expect, test } from "@jest/globals";
-import { packBytesLE, computeCommitment, computeDomainCommitment, computeNullifier, computePubkeyHash, escrowIdToField, relayerToField } from "../scripts/poseidon";
+import { packBytesLE, computeCommitment, computeDomainCommitment, computePubkeyHash, relayerToField } from "../scripts/poseidon";
 
 test("packBytesLE: 31 bytes per chunk, little-endian, zero pad", () => {
   const chunks = packBytesLE(new Uint8Array([1, 2, 3]), 62); // 2 chunks
   expect(chunks.length).toBe(2);
   expect(chunks[0]).toBe(1n + 2n * 256n + 3n * 65536n);
   expect(chunks[1]).toBe(0n);
-});
-
-test("escrowIdToField: big-endian", () => {
-  const id = new Uint8Array(16); id[15] = 0x2a;
-  expect(escrowIdToField(id)).toBe(42n);
 });
 
 test("relayerToField: pubkey mod Fr", () => {
@@ -25,10 +20,11 @@ test("computeCommitment: deterministic + case-insensitive + trim", async () => {
   expect(a).toBe(b);
 });
 
-test("computeNullifier / computeDomainCommitment: stable shape", async () => {
-  const n = await computeNullifier("alice@test.com", 42n);
+test("computeCommitment / computeDomainCommitment: stable shape", async () => {
+  const c = await computeCommitment("alice@test.com");
   const d = await computeDomainCommitment("test.com");
-  expect(typeof n).toBe("bigint");
+  expect(typeof c).toBe("bigint");
+  expect(c).toBeGreaterThan(0n);
   expect(d).toBeGreaterThan(0n);
 });
 

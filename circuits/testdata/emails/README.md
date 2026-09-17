@@ -6,9 +6,9 @@
 
 | 文件名 | 用途 | 说明 |
 |---|---|---|
-| `claim.eml` | claim 测试 | To 用某个 32hex escrow id |
-| `sweep.eml` | Inbox 清扫测试 | 用**另一个** 32hex id |
-| `e2e.eml` | 端到端测试 | 再用一个 32hex id |
+| `claim.eml` | claim 测试 | To 固定为 `claim@relay.xyz` |
+| `sweep.eml` | Inbox 清扫测试 | 同上 |
+| `e2e.eml` | 端到端测试 | 同上 |
 
 三封可以在同一次发送操作中完成（发三封邮件即可）。
 
@@ -16,8 +16,7 @@
 
 用真实邮箱（Gmail 即可）**发送**一封新邮件（不要回复，避免 `Re:` 前缀）：
 
-1. **收件人**：`claim+<32 位小写 hex>@relay.xyz`
-   例如 `claim+0123456789abcdef0123456789abcdef@relay.xyz`。
+1. **收件人**：`claim@relay.xyz`（v1.5 固定系统邮箱，不再携带 32hex escrow id）。
    该地址不需要真实存在——Gmail 出站服务器照常 DKIM 签名，之后从「已发送」里导出。
 2. **标题**：一个合法 Solana base58 地址（如 `4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM`），**整行只有地址，不加任何多余字符**。
 3. **正文**：任意（可为空）。
@@ -39,7 +38,7 @@ cd circuits && npx tsx -e "
 import('./scripts/load-email.ts').then(async (m) => {
   const r = await m.loadClaimEmail('testdata/emails/claim.eml', 123n);
   console.log('OK', { from: r.meta.fromEmail, selector: r.meta.selector,
-    escrowId: r.meta.escrowIdHex, dest: r.meta.destBase58, ts: r.meta.timestamp });
+    dest: r.meta.destBase58, ts: r.meta.timestamp });
 });"
 ```
 

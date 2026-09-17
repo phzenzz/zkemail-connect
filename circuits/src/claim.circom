@@ -7,26 +7,25 @@ include "@zk-email/zk-regex-circom/circuits/common/email_domain_regex.circom";
 include "@zk-email/zk-regex-circom/circuits/common/timestamp_regex.circom";
 include "circomlib/circuits/poseidon.circom";
 include "./lib/pack.circom";
-include "./lib/hex.circom";
 include "./lib/digits.circom";
-include "./regexes/claim_to_regex.circom";
+include "./regexes/to_presence_regex.circom";
 include "./regexes/subject_addr_regex.circom";
 
 // Claim circuit: proves "a DKIM-valid email exists whose From hashes to commitment,
-// whose To carries escrowId, whose Subject is exactly a base58 address (dest)",
-// revealing dest + relayer + timestamp, hiding the email address.
+// whose To is the system mailbox claim@relay.xyz, whose Subject is exactly a base58
+// address (dest)", revealing dest + relayer + timestamp, hiding the email address.
 //
 // Public signals (order fixed, on-chain program depends on it):
-//   [pubkeyHash, commitment, escrowId, timestamp, nullifier, relayer, destA, destB, domainCommitment]
+//   [pubkeyHash, commitment, timestamp, relayer, destA, destB, domainCommitment]
 //
 // SECURITY NOTE: `timestamp` comes from the DKIM-Signature header's `t=` tag. That tag
 // sits inside the hashed header bytes (the DKIM-Signature header is hashed with b=
 // emptied), but the `t=` value itself is not bound by any other field, so a malicious
 // prover can forge the timestamp to pass a freshness window. Real replay protection
-// relies on: escrow_id being unique per escrow (old emails don't contain a new id) +
-// the Escrow state machine being one-shot + the Inbox nullifier PDA. Production
-// hardening: mix `t=` into the nullifier or switch to an RFC5322 `Date:` parsing
-// circuit (high cost, deferred).
+// (v1.5): the Escrow account closes on claim (one-shot state machine), dest is bound
+// into the proof (an old proof only ever pays the same legitimate recipient), and the
+// on-chain 48h window bounds proof age. Production hardening: switch to an RFC5322
+// `Date:` parsing circuit (high cost, deferred).
 template ClaimCircuit(maxHeadersLength, n, k) {
     var MAX_EMAIL_LEN = 341;   // 11 chunks of 31 bytes
     var EMAIL_CHUNKS = 11;
@@ -41,16 +40,13 @@ template ClaimCircuit(maxHeadersLength, n, k) {
     signal input pubkey[k];
     signal input signature[k];
     signal input fromAddrIdx;
-    signal input escrowIdIdx;
     signal input subjectAddrIdx;
     signal input timestampIdx;
 
     // ---- public signals (constrained equal to computed values below)
     signal input pubkeyHash;
     signal input commitment;
-    signal input escrowId;
     signal input timestamp;
-    signal input nullifier;
     signal input relayer;
     signal input destA;
     signal input destB;
@@ -74,13 +70,9 @@ template ClaimCircuit(maxHeadersLength, n, k) {
     signal commitmentComputed <== Poseidon(EMAIL_CHUNKS)(emailChunks);
     commitment === commitmentComputed;
 
-    // C6: To carries claim+<32 lower hex>@relay.xyz -> escrowId
-    signal toOut; signal toReveal[maxHeadersLength];
-    (toOut, toReveal) <== ClaimToRegex(maxHeadersLength)(emailHeader);
+    // C6: To is the fixed system mailbox claim@relay.xyz (v1.5 match-only presence)
+    signal toOut <== ToPresenceRegex(maxHeadersLength)(emailHeader);
     toOut === 1;
-    signal escrowHex[32] <== SelectRegexReveal(maxHeadersLength, 32)(toReveal, escrowIdIdx);
-    signal escrowIdComputed <== HexToField(32)(escrowHex);
-    escrowId === escrowIdComputed;
 
     // C7 (structural): from-domain -> Poseidon == domainCommitment.
     // On-chain, the DKIM registry PDA is derived from domainCommitment and must hold
@@ -106,12 +98,6 @@ template ClaimCircuit(maxHeadersLength, n, k) {
     signal timestampComputed <== Digit2IntStrict(MAX_TS_DIGITS)(tsDigits);
     timestamp === timestampComputed;
 
-    // C9: nullifier = Poseidon(emailChunks, escrowId)
-    component nul = Poseidon(EMAIL_CHUNKS + 1);
-    for (var i = 0; i < EMAIL_CHUNKS; i++) nul.inputs[i] <== emailChunks[i];
-    nul.inputs[EMAIL_CHUNKS] <== escrowId;
-    nullifier === nul.out;
-
     // C11: Subject strictly one base58 address -> destA/destB (31-byte LE chunks)
     signal sOut; signal sReveal[maxHeadersLength];
     (sOut, sReveal) <== SubjectAddrRegex(maxHeadersLength)(emailHeader);
@@ -131,4 +117,4 @@ template ClaimCircuit(maxHeadersLength, n, k) {
 
 // maxHeadersLength = 1024 (fallback from 2048: at 2048 the circuit is ~10.7M constraints,
 // over the ptau22 budget of 2^22 = 4,194,304; canonicalized headers of real replies are ~1KB).
-component main {public [pubkeyHash, commitment, escrowId, timestamp, nullifier, relayer, destA, destB, domainCommitment]} = ClaimCircuit(1024, 121, 17);
+component main {public [pubkeyHash, commitment, timestamp, relayer, destA, destB, domainCommitment]} = ClaimCircuit(1024, 121, 17);

@@ -41,11 +41,6 @@ export async function computeDomainCommitment(domain: string): Promise<bigint> {
   return poseidonHash(packBytesLE(bytes, DOMAIN_PADDED_LEN));
 }
 
-export async function computeNullifier(email: string, escrowIdField: bigint): Promise<bigint> {
-  const bytes = new TextEncoder().encode(email.trim().toLowerCase());
-  return poseidonHash([...packBytesLE(bytes, EMAIL_PADDED_LEN), escrowIdField]);
-}
-
 /** PoseidonLarge(121,17): RSA modulus n split into 17 limbs of 121 bits (LE), merged pairwise. */
 export async function computePubkeyHash(modulus: bigint): Promise<bigint> {
   const limbs: bigint[] = [];
@@ -55,13 +50,6 @@ export async function computePubkeyHash(modulus: bigint): Promise<bigint> {
   const merged: bigint[] = [];
   for (let i = 0; i < 9; i++) merged.push(limbs[2 * i] + ((limbs[2 * i + 1] ?? 0n) << 121n));
   return poseidonHash(merged);
-}
-
-export function escrowIdToField(id: Uint8Array): bigint {
-  if (id.length !== 16) throw new Error("escrow id must be 16 bytes");
-  let v = 0n;
-  for (const b of id) v = (v << 8n) | BigInt(b); // big-endian
-  return v;
 }
 
 export function relayerToField(pubkeyBytes32: Uint8Array): bigint {

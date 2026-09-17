@@ -12,11 +12,11 @@ export interface SolanaProof {
   proofA: number[];        // [64]  pi_a NEGATED
   proofB: number[];        // [128] c1,c0 per coordinate
   proofC: number[];        // [64]
-  publicInputs: number[][]; // [9][32] big-endian, order = main public list
+  publicInputs: number[][]; // [7][32] big-endian, order = main public list
 }
 
 export function convertProofForSolana(proof: any, publicSignals: string[]): SolanaProof {
-  if (publicSignals.length !== 9) throw new Error("expected 9 public signals");
+  if (publicSignals.length !== 7) throw new Error("expected 7 public signals");
   const negY = (Q - BigInt(proof.pi_a[1])) % Q;
   return {
     proofA: [...be32(proof.pi_a[0]), ...be32(negY)],

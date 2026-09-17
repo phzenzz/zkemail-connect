@@ -2,11 +2,10 @@ import fs from "fs";
 import { verifyDKIMSignature } from "@zk-email/helpers/dist/dkim";
 import { generateEmailVerifierInputsFromDKIMResult } from "@zk-email/helpers";
 import {
-  computeCommitment, computeDomainCommitment, computeNullifier,
-  computePubkeyHash, escrowIdToField,
+  computeCommitment, computeDomainCommitment, computePubkeyHash,
 } from "./poseidon";
 
-export const MAX_HEADER_LEN = 2048;
+export const MAX_HEADER_LEN = 1024;
 export const MAX_DEST_LEN = 44;
 const FRESHNESS_SECS = 48 * 3600; // 与链上 TIMESTAMP_WINDOW_PAST 对齐
 
@@ -15,16 +14,10 @@ export interface LoadedEmail {
   inputs: Record<string, unknown>;
   meta: {
     fromEmail: string; domain: string; selector: string;
-    escrowIdHex: string; destBase58: string; timestamp: number;
-    commitment: string; escrowIdField: string; nullifier: string;
+    destBase58: string; timestamp: number;
+    commitment: string;
     pubkeyHash: string; domainCommitment: string; destA: string; destB: string;
   };
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
-  return out;
 }
 
 /** Find byte offset of `needle` in canonicalized headers; throws if absent. */
@@ -49,9 +42,11 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   const fromEmail = fromMatch[1].toLowerCase();
   const fromDomain = fromEmail.split("@")[1];
 
-  const toMatch = headerStr.match(/(?:^|\r\n)to:[^\r\n]*?claim\+([0-9a-f]{32})@relay\.xyz/i);
-  if (!toMatch) throw new Error("To does not carry claim+<32hex>@relay.xyz");
-  const escrowIdHex = toMatch[1];
+  // v1.5: To is the fixed system mailbox claim@relay.xyz (match-only presence check
+  // in-circuit; same pattern as ToPresenceRegex).
+  if (!/(?:^|\r\n)to:claim@relay\.xyz(?:\r\n)/i.test(headerStr)) {
+    throw new Error("To is not claim@relay.xyz");
+  }
 
   const subjectMatch = headerStr.match(/(?:^|\r\n)subject:([1-9A-HJ-NP-Za-km-z]{32,44})(?=\r\n)/);
   if (!subjectMatch) {
@@ -80,7 +75,6 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
 
   // 5. Reveal start indices on the canonicalized header buffer
   const fromIdx = indexOfHeader(headers, fromEmail);
-  const escrowIdx = indexOfHeader(headers, escrowIdHex);
   const subjectIdx = indexOfHeader(headers, destBase58);
   const tsIdx = indexOfHeader(headers, `t=${timestamp}`) + 2;
   const atPos = fromEmail.indexOf("@");
@@ -88,8 +82,6 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   // 6. Public signals
   const commitment = await computeCommitment(fromEmail);
   const domainCommitment = await computeDomainCommitment(fromDomain);
-  const escrowIdField = escrowIdToField(hexToBytes(escrowIdHex));
-  const nullifier = await computeNullifier(fromEmail, escrowIdField);
   const pubkeyHash = await computePubkeyHash(dkimResult.publicKey);
 
   const destBytes = new TextEncoder().encode(destBase58);
@@ -104,15 +96,12 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   const inputs: Record<string, unknown> = {
     ...baseInputs,
     fromAddrIdx: String(fromIdx),
-    escrowIdIdx: String(escrowIdx),
     subjectAddrIdx: String(subjectIdx),
     timestampIdx: String(tsIdx),
     domainIdx: String(atPos + 1),
     pubkeyHash: pubkeyHash.toString(),
     commitment: commitment.toString(),
-    escrowId: escrowIdField.toString(),
     timestamp: String(timestamp),
-    nullifier: nullifier.toString(),
     relayer: relayerField.toString(),
     destA: destA.toString(),
     destB: destB.toString(),
@@ -123,9 +112,8 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
     rawEmail, inputs,
     meta: {
       fromEmail, domain: fromDomain, selector: dkimResult.selector,
-      escrowIdHex, destBase58, timestamp,
-      commitment: commitment.toString(), escrowIdField: escrowIdField.toString(),
-      nullifier: nullifier.toString(), pubkeyHash: pubkeyHash.toString(),
+      destBase58, timestamp,
+      commitment: commitment.toString(), pubkeyHash: pubkeyHash.toString(),
       domainCommitment: domainCommitment.toString(),
       destA: destA.toString(), destB: destB.toString(),
     },

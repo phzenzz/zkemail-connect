@@ -1,0 +1,5 @@
+{
+  "parts": [
+    { "is_public": false, "regex_def": "(\\r\\n|^)to:claim@relay\\.xyz(\\r\\n)" }
+  ]
+}
