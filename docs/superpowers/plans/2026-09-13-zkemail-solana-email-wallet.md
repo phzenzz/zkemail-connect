@@ -30,6 +30,24 @@
 - **测试邮件 = 真实 `.eml`**：由人工用真实邮箱（如 Gmail）发出（`To: claim+<32hex>@relay.xyz`、`Subject: <base58 地址>`、正文任意）后导出原文，放入 `circuits/testdata/emails/`（`claim.eml` / `sweep.eml` / `e2e.eml`）。**不 mock DNS**：DKIM 公钥由 `@zk-email/helpers` 经 DoH 从真实 DNS 解析；Registry upsert 的 `pubkeyHash` 由真实公钥计算。**时效约束**：链上时间窗为 `now-48h`，`.eml` 签名时间超过 48 小时后 e2e/链上测试必然失败，需要重新导出邮件（测试代码检测到过期时报错并提示重新导出，不允许跳过）。
 - v1 范围外（不做）：Relayer 服务、Claim Page、批量空投（FR-9）、Token-2022（FR-10）、§6.4 兜底链接、加盐 commitment。
 
+## ⚠️ v1.5 Amendment（2026-09-17，用户决策，优先级高于上文 Global Constraints 与各 Task 文本）
+
+**移除 escrow_id。** v1 不再区分同一(发送方,邮箱)的多笔托管；邮件 `To` 固定为系统邮箱 `claim@relay.xyz`（不再用 plus-address 携带 id）。防重放 = 账户关闭（同一笔资金不可能被领两次）+ dest 绑定（旧证明"重放"只会付款给同一合法收款人）+ 48h 时间窗。窗口期内同一邮箱的任一有效证明可领取指向该邮箱的任何开放托管（"跨托管领取"，资金必然流向邮箱主人地址，PRD §10 已记录该语义）。
+
+上文被本条取代的内容：公开信号 9 个的清单（第 17-18 行）、escrow_id 条（第 21 行）、nullifier 条（第 26 行）、防重放描述中的"escrow_id 唯一性 + nullifier"（第 24 行）、测试邮件 To 格式（第 30 行）。各 Task 中所有 `escrowId/escrow_id/escrowIdHex/escrowIdIdx/HexToField 主电路接线/nullifier/NullifierRecord/claim_to_regex（捕获组版）` 相关规格均以本节为准。
+
+具体变更：
+
+1. **公开信号 9 → 7 个**，main public 顺序严格为：
+   `[pubkeyHash, commitment, timestamp, relayer, destA, destB, domainCommitment]`
+   （链上 `parse_public_inputs` 索引同步：timestamp=2、relayer=3、destA=4、destB=5、domainCommitment=6；`vk_ic.len() = 8`。）
+2. **电路**：To 正则从"捕获 32hex"改为 **match-only 存在性断言**：`ToPresenceRegex(msg_bytes)`，模式 `(\r\n|^)to:claim@relay\.xyz(\r\n)`（无捕获组，out===1 即可；用 zk-regex decomposed 全 private 或 raw 模式生成）。删除：escrowId/escrowIdIdx 输入与 HexToField 接线、nullifier 输出（去掉 escrowId 后与 commitment 恒等）、lib/hex.circom 的主电路引用（文件可保留但不接线）。
+3. **TS（load-email.ts / poseidon.ts）**：MAX_HEADER_LEN 修正为 **1024**（与编译产物一致，原 2048 是遗留 bug）；移除 escrowIdHex 解析、escrowIdField/escrowId 输入、computeNullifier/escrowIdToField（及对应测试）；To 校验改为必须包含 `claim@relay.xyz`（canonicalized 头部内）。
+4. **链上**：Escrow = `{commitment:[u8;32], sender, mint, amount, bump}`（SIZE=8+32+32+32+8+1），seeds = `[b"escrow", commitment, sender]`——同一(邮箱,发送方)同时只一笔 Open（重复创建 init 失败），领取关闭后可再创建。`create_escrow(commitment, amount)`（去掉 escrow_id 参数）。`claim` 删除 escrow_id 与 nullifier 校验。`sweep_inbox` 删除 NullifierRecord（重复 sweep 只会把新增余额继续付给同一 dest，无害；FR-INB-2）。错误码删除 EscrowIdMismatch/NullifierUsed/InboxNullifierConflict。
+5. **测试邮件**：To 一律 `claim@relay.xyz`（不再需要 32 位 hex id）；Subject 仍为 base58 地址；导出方式不变（新邮件 + Bcc 自己，收件箱导出原件）。
+6. **转换/生成脚本**：`convertProofForSolana` 断言 7 个公开信号；`gen-vk-rust.mjs` 断言 nPub===7、IC 8 个；`prove-for.ts` 参数去掉 escrowIdHex。
+7. **Trusted setup**：pot22_final.ptau（Hermez 仪式，Wayback 快照，4.8GB）**复用**——电路变更只需重跑 `groth16 setup` + `zkey export verificationkey` + `gen-vk-rust.mjs`（约 5 分钟），不需重新生成/下载 ptau。
+
 ## File Structure
 
 ```
