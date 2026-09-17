@@ -43,8 +43,9 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   const fromDomain = fromEmail.split("@")[1];
 
   // v1.5: To is the fixed system mailbox claim@relay.xyz (match-only presence check
-  // in-circuit; same pattern as ToPresenceRegex).
-  if (!/(?:^|\r\n)to:claim@relay\.xyz(?:\r\n)/i.test(headerStr)) {
+  // in-circuit; same exact-lowercase pattern as ToPresenceRegex — no /i: the circuit
+  // DFA is case-sensitive, so reject uppercase here with a clear error).
+  if (!/(?:^|\r\n)to:claim@relay\.xyz(?:\r\n)/.test(headerStr)) {
     throw new Error("To is not claim@relay.xyz");
   }
 
