@@ -6,13 +6,13 @@ use crate::errors::ErrorCode;
 use crate::state::Escrow;
 
 #[derive(Accounts)]
-#[instruction(commitment: [u8; 32], escrow_id: [u8; 16])]
+#[instruction(commitment: [u8; 32])]
 pub struct CreateEscrow<'info> {
     #[account(
         init,
         payer = sender,
         space = Escrow::SIZE,
-        seeds = [b"escrow", commitment.as_ref(), sender.key().as_ref(), escrow_id.as_ref()],
+        seeds = [b"escrow", commitment.as_ref(), sender.key().as_ref()],
         bump,
     )]
     pub escrow: Account<'info, Escrow>,
@@ -45,7 +45,6 @@ pub struct CreateEscrow<'info> {
 pub fn create_escrow(
     ctx: Context<CreateEscrow>,
     commitment: [u8; 32],
-    escrow_id: [u8; 16],
     amount: u64,
 ) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
@@ -54,7 +53,6 @@ pub fn create_escrow(
     escrow.sender = ctx.accounts.sender.key();
     escrow.mint = ctx.accounts.mint.key();
     escrow.amount = amount;
-    escrow.escrow_id = escrow_id;
     escrow.bump = ctx.bumps.escrow;
 
     token::transfer(

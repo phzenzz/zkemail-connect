@@ -11,9 +11,9 @@ export const program = anchor.workspace.EmailWallet as Program<EmailWallet>;
 export const provider = anchor.AnchorProvider.env();
 anchor.setProvider(provider);
 
-export function escrowPda(commitment: Buffer, sender: PublicKey, escrowId: Buffer) {
+export function escrowPda(commitment: Buffer, sender: PublicKey) {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("escrow"), commitment, sender.toBuffer(), escrowId],
+    [Buffer.from("escrow"), commitment, sender.toBuffer()],
     program.programId
   )[0];
 }

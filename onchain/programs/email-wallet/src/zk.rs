@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-pub const NUM_PUBLIC_INPUTS: usize = 9;
+pub const NUM_PUBLIC_INPUTS: usize = 7;
 pub const FR_MODULUS: [u8; 32] = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
     0x28, 0x33, 0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
@@ -10,9 +10,7 @@ pub const FR_MODULUS: [u8; 32] = [
 pub struct PublicInputs {
     pub pubkey_hash: [u8; 32],
     pub commitment: [u8; 32],
-    pub escrow_id: [u8; 32],
     pub timestamp: u64,
-    pub nullifier: [u8; 32],
     pub relayer: [u8; 32],
     pub dest_a: [u8; 32],
     pub dest_b: [u8; 32],
@@ -23,20 +21,18 @@ pub fn parse_public_inputs(raw: &[[u8; 32]; NUM_PUBLIC_INPUTS]) -> Result<Public
     let mut ts = [0u8; 8];
     // timestamp must fit u64: high 24 bytes must be zero
     require!(
-        raw[3][..24].iter().all(|b| *b == 0),
+        raw[2][..24].iter().all(|b| *b == 0),
         crate::errors::ErrorCode::TimestampOutOfWindow
     );
-    ts.copy_from_slice(&raw[3][24..]);
+    ts.copy_from_slice(&raw[2][24..]);
     Ok(PublicInputs {
         pubkey_hash: raw[0],
         commitment: raw[1],
-        escrow_id: raw[2],
         timestamp: u64::from_be_bytes(ts),
-        nullifier: raw[4],
-        relayer: raw[5],
-        dest_a: raw[6],
-        dest_b: raw[7],
-        domain_commitment: raw[8],
+        relayer: raw[3],
+        dest_a: raw[4],
+        dest_b: raw[5],
+        domain_commitment: raw[6],
     })
 }
 
@@ -75,11 +71,6 @@ pub fn decode_dest(dest_a: &[u8; 32], dest_b: &[u8; 32]) -> Result<Pubkey> {
     five8::decode_32(&ascii[..len], &mut out)
         .map_err(|_| crate::errors::ErrorCode::InvalidDestAddress)?;
     Ok(Pubkey::new_from_array(out))
-}
-
-/// Compare BN254 field (BE) against a 16-byte escrow id (BE, left-padded with zeros).
-pub fn escrow_id_matches(field: &[u8; 32], id: &[u8; 16]) -> bool {
-    field[..16].iter().all(|b| *b == 0) && &field[16..] == id
 }
 
 /// Map a 32-byte pubkey to a BN254 field element: BE integer mod Fr (<= 5 subtractions).
@@ -147,15 +138,6 @@ mod tests {
         let fa = pack31_le(&bytes[..31]);
         let fb = pack31_le(&bytes[31..]);
         assert!(decode_dest(&fa, &fb).is_err());
-    }
-
-    #[test]
-    fn escrow_id_match() {
-        let id = [0xabu8; 16];
-        let mut f = [0u8; 32];
-        f[16..].copy_from_slice(&id);
-        assert!(escrow_id_matches(&f, &id));
-        assert!(!escrow_id_matches(&[1u8; 32], &id));
     }
 
     #[test]

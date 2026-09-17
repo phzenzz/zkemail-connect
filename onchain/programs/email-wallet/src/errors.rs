@@ -12,12 +12,8 @@ pub enum ErrorCode {
     PubkeyHashMismatch,
     #[msg("commitment mismatch")]
     CommitmentMismatch,
-    #[msg("escrow id mismatch")]
-    EscrowIdMismatch,
     #[msg("timestamp outside allowed window")]
     TimestampOutOfWindow,
-    #[msg("nullifier already used")]
-    NullifierUsed,
     #[msg("relayer mismatch")]
     RelayerMismatch,
     #[msg("invalid dest field encoding")]
@@ -30,8 +26,6 @@ pub enum ErrorCode {
     ProofVerificationFailed,
     #[msg("vault balance mismatch")]
     VaultBalanceMismatch,
-    #[msg("inbox sweep requires nonzero escrow id uniqueness")]
-    InboxNullifierConflict,
     #[msg("amount must be positive")]
     InvalidAmount,
 }

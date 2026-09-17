@@ -43,14 +43,9 @@ describe("create_escrow", () => {
   });
 
   it("creates escrow and funds vault", async () => {
-    const escrowId = randomBytes(16);
-    const escrow = escrowPda(commitment, sender.publicKey, escrowId);
+    const escrow = escrowPda(commitment, sender.publicKey);
     await program.methods
-      .createEscrow(
-        Array.from(commitment),
-        Array.from(escrowId),
-        new anchor.BN(500_000)
-      )
+      .createEscrow(Array.from(commitment), new anchor.BN(500_000))
       .accounts({
         escrow,
         mint,
@@ -69,15 +64,11 @@ describe("create_escrow", () => {
   });
 
   it("rejects zero amount", async () => {
-    const escrowId = randomBytes(16);
-    const escrow = escrowPda(commitment, sender.publicKey, escrowId);
+    const otherCommitment = randomBytes(32);
+    const escrow = escrowPda(otherCommitment, sender.publicKey);
     await expect(
       program.methods
-        .createEscrow(
-          Array.from(commitment),
-          Array.from(escrowId),
-          new anchor.BN(0)
-        )
+        .createEscrow(Array.from(otherCommitment), new anchor.BN(0))
         .accounts({
           escrow,
           mint,
@@ -91,16 +82,12 @@ describe("create_escrow", () => {
     ).to.be.rejectedWith(/InvalidAmount/);
   });
 
-  it("same (commitment, sender, escrow_id) cannot be created twice", async () => {
-    const escrowId = randomBytes(16);
-    const escrow = escrowPda(commitment, sender.publicKey, escrowId);
+  it("same (commitment, sender) cannot be created twice", async () => {
+    const otherCommitment = randomBytes(32);
+    const escrow = escrowPda(otherCommitment, sender.publicKey);
     const mk = () =>
       program.methods
-        .createEscrow(
-          Array.from(commitment),
-          Array.from(escrowId),
-          new anchor.BN(1000)
-        )
+        .createEscrow(Array.from(otherCommitment), new anchor.BN(1000))
         .accounts({
           escrow,
           mint,
@@ -115,22 +102,38 @@ describe("create_escrow", () => {
     await expect(mk()).to.be.rejected; // PDA already initialized
   });
 
-  it("different escrow_id for same email+sender creates independent escrows", async () => {
-    const id2 = randomBytes(16);
-    const escrow2 = escrowPda(commitment, sender.publicKey, id2);
+  it("different sender creates independent escrow for same commitment", async () => {
+    const sender2 = Keypair.generate();
+    await fundSender(sender2);
+    const sender2Ata = await createAccount(
+      provider.connection,
+      sender2,
+      mint,
+      sender2.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      sender,
+      mint,
+      sender2Ata,
+      sender,
+      1_000_000
+    );
+    const escrow2 = escrowPda(commitment, sender2.publicKey);
     await program.methods
-      .createEscrow(Array.from(commitment), Array.from(id2), new anchor.BN(7))
+      .createEscrow(Array.from(commitment), new anchor.BN(7))
       .accounts({
         escrow: escrow2,
         mint,
         vault: ata(mint, escrow2),
-        senderAta,
-        sender: sender.publicKey,
+        senderAta: sender2Ata,
+        sender: sender2.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .signers([sender])
+      .signers([sender2])
       .rpc();
     const acc = await program.account.escrow.fetch(escrow2);
     assert.equal(acc.amount.toNumber(), 7);
+    assert.equal(acc.sender.toBase58(), sender2.publicKey.toBase58());
   });
 });

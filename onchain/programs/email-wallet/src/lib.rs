@@ -17,10 +17,9 @@ pub mod email_wallet {
     pub fn create_escrow(
         ctx: Context<CreateEscrow>,
         commitment: [u8; 32],
-        escrow_id: [u8; 16],
         amount: u64,
     ) -> Result<()> {
-        instructions::create_escrow(ctx, commitment, escrow_id, amount)
+        instructions::create_escrow(ctx, commitment, amount)
     }
 
     pub fn initialize_registry(ctx: Context<InitializeRegistry>, authority: Pubkey) -> Result<()> {

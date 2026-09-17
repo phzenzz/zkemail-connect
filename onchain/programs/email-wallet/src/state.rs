@@ -15,11 +15,10 @@ pub struct Escrow {
     pub sender: Pubkey,
     pub mint: Pubkey,
     pub amount: u64,
-    pub escrow_id: [u8; 16], // plus-address id; doubles as the PDA nonce
     pub bump: u8,
 }
 impl Escrow {
-    pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 16 + 1;
+    pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 1;
 }
 
 #[account]
