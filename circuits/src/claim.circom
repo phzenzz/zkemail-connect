@@ -12,7 +12,8 @@ include "./regexes/to_presence_regex.circom";
 include "./regexes/subject_addr_regex.circom";
 
 // Claim circuit: proves "a DKIM-valid email exists whose From hashes to commitment,
-// whose To is the system mailbox claim@relay.xyz, whose Subject is exactly a base58
+// whose To is the configured relay mailbox (circuits/relay.config.json; production
+// default claim@relay.xyz), whose Subject is exactly a base58
 // address (dest)", revealing dest + relayer + timestamp, hiding the email address.
 //
 // Public signals (order fixed, on-chain program depends on it):
@@ -70,7 +71,8 @@ template ClaimCircuit(maxHeadersLength, n, k) {
     signal commitmentComputed <== Poseidon(EMAIL_CHUNKS)(emailChunks);
     commitment === commitmentComputed;
 
-    // C6: To is the fixed system mailbox claim@relay.xyz (v1.5 match-only presence)
+    // C6: To is exactly the configured relay address (v1.5.1; match-only presence,
+    // address from relay.config.json, compiled into the ToPresenceRegex DFA)
     signal toOut <== ToPresenceRegex(maxHeadersLength)(emailHeader);
     toOut === 1;
 

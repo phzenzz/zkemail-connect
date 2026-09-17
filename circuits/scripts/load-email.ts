@@ -4,6 +4,7 @@ import { generateEmailVerifierInputsFromDKIMResult } from "@zk-email/helpers";
 import {
   computeCommitment, computeDomainCommitment, computePubkeyHash,
 } from "./poseidon";
+import { getRelayAddress, relayAddressRegexEscaped } from "./relay-config";
 
 export const MAX_HEADER_LEN = 1024;
 export const MAX_DEST_LEN = 44;
@@ -42,11 +43,14 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   const fromEmail = fromMatch[1].toLowerCase();
   const fromDomain = fromEmail.split("@")[1];
 
-  // v1.5: To is the fixed system mailbox claim@relay.xyz (match-only presence check
-  // in-circuit; same exact-lowercase pattern as ToPresenceRegex — no /i: the circuit
-  // DFA is case-sensitive, so reject uppercase here with a clear error).
-  if (!/(?:^|\r\n)to:claim@relay\.xyz(?:\r\n)/.test(headerStr)) {
-    throw new Error("To is not claim@relay.xyz");
+  // v1.5.1: To must be exactly the configured relay address (relay.config.json /
+  // RELAY_ADDRESS), match-only presence check in-circuit; same exact-lowercase
+  // pattern as ToPresenceRegex — no /i: the circuit DFA is case-sensitive, so
+  // reject any case/extra-char mismatch here with a clear error.
+  const relayAddress = getRelayAddress();
+  const toGuard = new RegExp(`(?:^|\\r\\n)to:${relayAddressRegexEscaped()}(?:\\r\\n)`);
+  if (!toGuard.test(headerStr)) {
+    throw new Error(`To is not ${relayAddress} (exact, case-sensitive — see relay.config.json)`);
   }
 
   const subjectMatch = headerStr.match(/(?:^|\r\n)subject:([1-9A-HJ-NP-Za-km-z]{32,44})(?=\r\n)/);

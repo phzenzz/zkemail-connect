@@ -4,6 +4,7 @@
   "workspaces": ["circuits"],
   "scripts": {
     "circuit:compile": "bash circuits/scripts/compile.sh",
+    "circuit:rebuild": "bash circuits/scripts/rebuild.sh",
     "circuit:setup": "bash circuits/scripts/setup.sh",
     "circuit:test": "cd circuits && npm test",
     "prover:up": "docker compose up -d --build prover",
