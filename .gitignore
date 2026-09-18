@@ -7,3 +7,4 @@ onchain/.anchor/
 circuits/testdata/emails/*.eml
 .worktrees/
 .superpowers/
+docs/superpowers/
