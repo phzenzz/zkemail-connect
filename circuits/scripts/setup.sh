@@ -11,7 +11,10 @@
 # the file already exists.
 #
 # Pipeline (snarkjs, bn128):
-#   1. download pot22_final.ptau if missing (Wayback snapshot of the Hermez file)
+#   1. download pot22_final.ptau if missing (Wayback snapshot of the Hermez file);
+#      downloaded to a .tmp path and activated only after its byte size matches
+#      the known ceremony file (4,831,921,304) — a truncated download is never
+#      mistaken for a cached ptau
 #   2. groth16 setup build/claim.r1cs pot22_final.ptau → claim_0000.zkey
 #   3. zkey contribute (single dev entropy) → claim_final.zkey; afterwards
 #      delta != gamma (a zero-contribution zkey has delta == gamma, trivially forgeable)
@@ -28,10 +31,32 @@ mkdir -p build
 export NODE_OPTIONS="--max-old-space-size=16384"
 
 PTAU=build/pot22_final.ptau
-if [ ! -f "$PTAU" ]; then
+# Known size of powersOfTau28_hez_final_22.ptau (verified: stat -f %z on the ceremony file).
+EXPECTED_SIZE=4831921304
+
+file_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
+
+if [ -f "$PTAU" ]; then
+  CACHED_SIZE=$(file_size "$PTAU")
+  if [ "$CACHED_SIZE" != "$EXPECTED_SIZE" ]; then
+    echo "[setup] ERROR: existing $PTAU is $CACHED_SIZE bytes, expected $EXPECTED_SIZE (corrupt/truncated)." >&2
+    echo "[setup] delete it and rerun to re-download." >&2
+    exit 1
+  fi
+else
   echo "[setup] downloading Hermez ceremony ptau (~4.8GB via Wayback, slow)"
-  curl -fL --retry 3 -o "$PTAU" \
-    https://web.archive.org/web/20250726170323/https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_22.ptau
+  if ! curl -fL --retry 3 -o "$PTAU.tmp" \
+    https://web.archive.org/web/20250726170323/https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_22.ptau; then
+    echo "[setup] ERROR: download failed. Delete $PTAU.tmp and retry." >&2
+    exit 1
+  fi
+  DOWNLOADED_SIZE=$(file_size "$PTAU.tmp")
+  if [ "$DOWNLOADED_SIZE" != "$EXPECTED_SIZE" ]; then
+    echo "[setup] ERROR: downloaded ptau is $DOWNLOADED_SIZE bytes, expected $EXPECTED_SIZE (truncated/corrupt)." >&2
+    echo "[setup] Delete $PTAU.tmp and retry." >&2
+    exit 1
+  fi
+  mv "$PTAU.tmp" "$PTAU"
 fi
 
 npx snarkjs groth16 setup build/claim.r1cs "$PTAU" build/claim_0000.zkey
