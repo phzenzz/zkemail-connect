@@ -6,7 +6,7 @@ use groth16_solana::groth16::Groth16Verifier;
 use crate::errors::ErrorCode;
 use crate::state::{DkimRegistry, Escrow, RegistryStatus};
 use crate::verifying_key::VERIFYING_KEY;
-use crate::zk;
+use crate::zk::{self, PublicInputs};
 
 pub const TIMESTAMP_WINDOW_PAST: i64 = 48 * 3600; // 48h
 pub const TIMESTAMP_WINDOW_FUTURE: i64 = 600; // 10min clock skew
@@ -69,45 +69,19 @@ pub struct Claim<'info> {
 
 pub fn claim(ctx: Context<Claim>, args: ClaimArgs) -> Result<()> {
     let escrow = &ctx.accounts.escrow;
-    let now = Clock::get()?.unix_timestamp;
 
     // 1. parse public inputs + bind commitment to the escrow being claimed
     let pi = zk::parse_public_inputs(&args.public_inputs)?;
     require!(pi.commitment == escrow.commitment, ErrorCode::CommitmentMismatch);
 
-    // 2. registry: key must be registered, active, unexpired, matching the proven pubkey hash
-    let registry = &ctx.accounts.registry;
-    require!(registry.status == RegistryStatus::Active, ErrorCode::RegistryNotActive);
-    require!(registry.expires_at > now, ErrorCode::RegistryExpired);
-    require!(registry.pubkey_hash == pi.pubkey_hash, ErrorCode::PubkeyHashMismatch);
-
-    // 3. timestamp window
-    let ts = pi.timestamp as i64;
-    require!(
-        ts >= now - TIMESTAMP_WINDOW_PAST && ts <= now + TIMESTAMP_WINDOW_FUTURE,
-        ErrorCode::TimestampOutOfWindow
-    );
-
-    // 4. relayer binding: proof binds the fee payer
-    require!(
-        zk::pubkey_to_field(&ctx.accounts.payer.key()) == pi.relayer,
-        ErrorCode::RelayerMismatch
-    );
-
-    // 5. dest from proof (subject address), must match the provided dest_owner account
-    let dest = zk::decode_dest(&pi.dest_a, &pi.dest_b)?;
-    require!(dest == ctx.accounts.dest_owner.key(), ErrorCode::DestOwnerMismatch);
-
-    // 6. Groth16 verify
-    let mut verifier = Groth16Verifier::new(
-        &args.proof_a,
-        &args.proof_b,
-        &args.proof_c,
-        &args.public_inputs,
-        &VERIFYING_KEY,
-    )
-    .map_err(|_| ErrorCode::ProofVerificationFailed)?;
-    verifier.verify().map_err(|_| ErrorCode::ProofVerificationFailed)?;
+    // 2-6. registry + timestamp + relayer + dest + groth16 (shared with sweep_inbox)
+    verify_claim_common(
+        &args,
+        &pi,
+        &ctx.accounts.registry,
+        &ctx.accounts.payer.key(),
+        &ctx.accounts.dest_owner.key(),
+    )?;
 
     // 7. transfer everything out of the vault, then close it; escrow closed by `close = sender`
     let seeds: &[&[u8]] = &[
@@ -140,4 +114,49 @@ pub fn claim(ctx: Context<Claim>, args: ClaimArgs) -> Result<()> {
         signer,
     ))?;
     Ok(())
+}
+
+/// Preconditions shared by claim and sweep_inbox: registry status/expiry/pubkey hash,
+/// timestamp window, relayer binding, dest binding, Groth16 verify.
+/// Returns the decoded dest pubkey.
+pub fn verify_claim_common(
+    args: &ClaimArgs,
+    pi: &PublicInputs,
+    registry: &DkimRegistry,
+    payer: &Pubkey,
+    dest_owner: &Pubkey,
+) -> Result<Pubkey> {
+    let now = Clock::get()?.unix_timestamp;
+
+    // registry: key must be registered, active, unexpired, matching the proven pubkey hash
+    require!(registry.status == RegistryStatus::Active, ErrorCode::RegistryNotActive);
+    require!(registry.expires_at > now, ErrorCode::RegistryExpired);
+    require!(registry.pubkey_hash == pi.pubkey_hash, ErrorCode::PubkeyHashMismatch);
+
+    // timestamp window
+    let ts = pi.timestamp as i64;
+    require!(
+        ts >= now - TIMESTAMP_WINDOW_PAST && ts <= now + TIMESTAMP_WINDOW_FUTURE,
+        ErrorCode::TimestampOutOfWindow
+    );
+
+    // relayer binding: proof binds the fee payer
+    require!(zk::pubkey_to_field(payer) == pi.relayer, ErrorCode::RelayerMismatch);
+
+    // dest from proof (subject address), must match the provided dest_owner account
+    let dest = zk::decode_dest(&pi.dest_a, &pi.dest_b)?;
+    require!(dest == *dest_owner, ErrorCode::DestOwnerMismatch);
+
+    // Groth16 verify
+    let mut verifier = Groth16Verifier::new(
+        &args.proof_a,
+        &args.proof_b,
+        &args.proof_c,
+        &args.public_inputs,
+        &VERIFYING_KEY,
+    )
+    .map_err(|_| ErrorCode::ProofVerificationFailed)?;
+    verifier.verify().map_err(|_| ErrorCode::ProofVerificationFailed)?;
+
+    Ok(dest)
 }

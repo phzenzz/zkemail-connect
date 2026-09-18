@@ -40,6 +40,13 @@ pub mod email_wallet {
         instructions::claim(ctx, args)
     }
 
+    pub fn sweep_inbox<'info>(
+        ctx: Context<'_, '_, '_, 'info, SweepInbox<'info>>,
+        args: ClaimArgs,
+    ) -> Result<()> {
+        instructions::sweep_inbox(ctx, args)
+    }
+
     pub fn registry_revoke(
         ctx: Context<RegistryRevoke>,
         domain_commitment: [u8; 32],
