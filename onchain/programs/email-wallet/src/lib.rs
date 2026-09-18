@@ -36,6 +36,10 @@ pub mod email_wallet {
         instructions::registry_upsert(ctx, domain_commitment, selector, pubkey_hash, expires_at)
     }
 
+    pub fn claim(ctx: Context<Claim>, args: ClaimArgs) -> Result<()> {
+        instructions::claim(ctx, args)
+    }
+
     pub fn registry_revoke(
         ctx: Context<RegistryRevoke>,
         domain_commitment: [u8; 32],
