@@ -9,13 +9,25 @@ import {
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { assert, expect } from "chai";
 import { randomBytes } from "crypto";
-import { program, provider, escrowPda, ata, fundSender } from "./helpers";
+import { program, provider, escrowPda, ata, fundSender, fieldToBE } from "./helpers";
+
+// BN254 Fr; create_escrow rejects commitments >= Fr (no valid proof could match).
+const FR = BigInt(
+  "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
+);
+const randomFieldCommitment = () => {
+  let c: bigint;
+  do {
+    c = BigInt(`0x${randomBytes(32).toString("hex")}`);
+  } while (c >= FR);
+  return fieldToBE(c.toString());
+};
 
 describe("create_escrow", () => {
   const sender = Keypair.generate();
   let mint: PublicKey;
   let senderAta: PublicKey;
-  const commitment = randomBytes(32);
+  const commitment = randomFieldCommitment();
 
   before(async () => {
     await fundSender(sender);
@@ -64,7 +76,7 @@ describe("create_escrow", () => {
   });
 
   it("rejects zero amount", async () => {
-    const otherCommitment = randomBytes(32);
+    const otherCommitment = randomFieldCommitment();
     const escrow = escrowPda(otherCommitment, sender.publicKey);
     await expect(
       program.methods
@@ -82,8 +94,32 @@ describe("create_escrow", () => {
     ).to.be.rejectedWith(/InvalidAmount/);
   });
 
+  it("rejects commitment >= BN254 Fr (funds would be permanently locked)", async () => {
+    // Fr = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001;
+    // no valid proof can ever match it, so create_escrow must reject it.
+    const fr = Buffer.from(
+      "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
+      "hex"
+    );
+    const escrow = escrowPda(fr, sender.publicKey);
+    await expect(
+      program.methods
+        .createEscrow(Array.from(fr), new anchor.BN(1000))
+        .accounts({
+          escrow,
+          mint,
+          vault: ata(mint, escrow),
+          senderAta,
+          sender: sender.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([sender])
+        .rpc()
+    ).to.be.rejectedWith(/InvalidCommitment/);
+  });
+
   it("same (commitment, sender) cannot be created twice", async () => {
-    const otherCommitment = randomBytes(32);
+    const otherCommitment = randomFieldCommitment();
     const escrow = escrowPda(otherCommitment, sender.publicKey);
     const mk = () =>
       program.methods

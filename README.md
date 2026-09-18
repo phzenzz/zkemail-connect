@@ -18,6 +18,12 @@ the recipient needs nothing but the email thread.
 node 20+, circom 2.1.6, anchor-cli 0.32.1 (via `avm`), solana CLI 2.2+, docker.
 Test fixtures are real exported emails: see `circuits/testdata/emails/README.md` —
 DKIM freshness is 48h, so expired `.eml` files must be re-exported before testing.
+`npm install` requires GitHub SSH access (a transitive `snarkjs` dep resolves via
+`git+ssh://git@github.com/...` in `package-lock.json`); if SSH to GitHub is not
+available, add an npm `overrides` entry for that package instead.
+`initialize_registry` is first-mover: the first caller becomes the registry
+authority, so the program deploy and registry initialization must happen in the
+same batch before any public use.
 
 ## Build & test (from repo root)
 

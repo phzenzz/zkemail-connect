@@ -28,4 +28,6 @@ pub enum ErrorCode {
     VaultBalanceMismatch,
     #[msg("amount must be positive")]
     InvalidAmount,
+    #[msg("commitment must be < BN254 scalar field modulus")]
+    InvalidCommitment,
 }

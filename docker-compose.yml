@@ -7,5 +7,5 @@ services:
     environment:
       ARTIFACTS_DIR: /artifacts
     restart: unless-stopped
-    # ~3.4M 约束的 rapidsnark 出证内存峰值约 8–12GB；按需调整
+    # ~2.70M 约束的 rapidsnark 出证内存峰值约 8–12GB；按需调整
     mem_limit: 12g

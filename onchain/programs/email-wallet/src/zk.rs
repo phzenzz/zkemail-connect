@@ -82,7 +82,7 @@ pub fn pubkey_to_field(pk: &Pubkey) -> [u8; 32] {
     x
 }
 
-fn ge_be(a: &[u8; 32], b: &[u8; 32]) -> bool {
+pub fn ge_be(a: &[u8; 32], b: &[u8; 32]) -> bool {
     for i in 0..32 {
         if a[i] != b[i] {
             return a[i] > b[i];

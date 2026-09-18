@@ -5,7 +5,7 @@ import { wasm as wasmTester } from "circom_tester";
 import { loadClaimEmail, LoadedEmail } from "../scripts/load-email";
 
 // v1.5 circuit (7 public signals, MAX_HEADER_LEN=1024, --O2): witness calc on a
-// ~2.7M-constraint circuit is heavy — 15 min per test.
+// ~2.7M-constraint circuit is heavy — ~70s per test.
 jest.setTimeout(900_000);
 
 const EML = path.join(__dirname, "../testdata/emails/claim.eml");

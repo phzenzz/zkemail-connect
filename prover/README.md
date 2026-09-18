@@ -40,11 +40,12 @@ curl -s -X POST localhost:8080/prove \
 
 - `/artifacts/claim_js/claim.wasm`
 - `/artifacts/claim_js/generate_witness.js`
+- `/artifacts/claim_js/witness_calculator.js`
 - `/artifacts/claim_final.zkey`
 
 ## 资源建议
 
-- 内存：`mem_limit: 12g`（claim 电路 ~3.4M 约束，rapidsnark 出证峰值约 8–12GB）。
+- 内存：`mem_limit: 12g`（claim 电路 ~2.70M 约束，rapidsnark 出证峰值约 8–12GB）。
 - 出证是串行的：rapidsnark 非线程安全并发服务，server 内部用 Promise 链排队；
   横向扩容请加容器实例而不是调大并发。
 
@@ -52,5 +53,5 @@ curl -s -X POST localhost:8080/prove \
 
 - rapidsnark pinned commit 见 `prover/Dockerfile` 头部注释；构建步骤以该 commit
   的 README（standalone Makefile 流程）为准。
-- 真实往返（fixture-input → 证明 → snarkjs 交叉验证）在 `fixture-input.json`
-  就绪后执行，见任务报告。
+- 真实往返（真实 `.eml` → 证明 → snarkjs 交叉验证 → localnet claim）已由根目录
+  `npm run e2e` 覆盖。

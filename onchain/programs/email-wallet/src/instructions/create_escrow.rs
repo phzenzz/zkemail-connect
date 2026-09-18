@@ -48,6 +48,10 @@ pub fn create_escrow(
     amount: u64,
 ) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
+    require!(
+        !crate::zk::ge_be(&commitment, &crate::zk::FR_MODULUS),
+        ErrorCode::InvalidCommitment
+    );
     let escrow = &mut ctx.accounts.escrow;
     escrow.commitment = commitment;
     escrow.sender = ctx.accounts.sender.key();
