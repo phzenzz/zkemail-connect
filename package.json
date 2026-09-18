@@ -1,7 +1,9 @@
 {
   "name": "zkemail-solana-connect",
   "private": true,
-  "workspaces": ["circuits"],
+  "workspaces": [
+    "circuits"
+  ],
   "scripts": {
     "circuit:compile": "bash circuits/scripts/compile.sh",
     "circuit:rebuild": "bash circuits/scripts/rebuild.sh",
@@ -12,8 +14,11 @@
     "e2e": "npx tsx e2e/e2e.ts"
   },
   "devDependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0",
+    "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.6.0"
   }
 }
