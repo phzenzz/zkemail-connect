@@ -3,5 +3,7 @@ circuits/build/
 onchain/target/
 onchain/test-ledger/
 onchain/.anchor/
+# exported test emails contain personal info — never commit (see circuits/testdata/emails/README.md)
+circuits/testdata/emails/*.eml
 .worktrees/
 .superpowers/

@@ -209,7 +209,7 @@ sequenceDiagram
 
 | 编号 | 需求 | 指标 |
 | --- | --- | --- |
-| NFR-1 | claim 交易 CU | < 150,000 CU（证明验证 ~109k + 转账，无签名验证步骤） |
+| NFR-1 | claim 交易 CU | < 150,000 CU（证明验证 ~109k + 转账，无签名验证步骤）（v1 实测 173,868 CU，超目标，原因：7 公开输入+SPL CPI+账户关闭；v2 优化项） |
 | NFR-2 | 单笔交易大小 | < 1232 B（证明 256 B + 公开输入 8 field = 256 B + 账户，满足） |
 | NFR-3 | 证明生成延迟 | Relayer 服务器端 rapidsnark < 30 s |
 | NFR-4 | 用户端到端领取时长 | < 2 min（不含邮件投递时间） |
@@ -346,7 +346,7 @@ DKIM 的 RSA 签名覆盖头部哈希，头部哈希中把 `bh=`（正文哈希�
 | --- | --- | --- |
 | 证明系统 | Groth16 / BN254 | Solana 唯一有 syscall 支持的配对曲线（~100 bit 安全，对本场景足够） |
 | 证明格式 | snarkjs 标准 | `groth16-solana` 直接兼容 circom/snarkjs 的证明与 vkey |
-| `MAX_HEADER_LEN` | 2048 B | 覆盖主流服务商头部；超出走兜底 |
+| `MAX_HEADER_LEN` | 1024 B（实现值；Gmail/QQ canonicalized 头部实测 ~320B） | 覆盖主流服务商头部；超出走兜底 |
 | Body | 不进电路 | §6.3 |
 | proving key | 电路编译产物，Relayer 持有 | vkey 上链/硬编码于程序 |
 
@@ -392,6 +392,7 @@ DkimRegistry PDA  seeds = ["dkim", domain_commitment, selector]
 - `claim`/`sweep_inbox` 中 `dest` 由电路公开输出经链上 bs58 解码得到，任何链下参与方无法指定或替换（§4.2.1）。
 - 状态机校验（账户存在即 Open，claim 终态关闭）；重放安全性论证见 §10"跨托管领取"与 FR-INB-2。
 - Registry 仅接受 Authority 更新；前端/Relayer 必须读取链上 Registry 而非自备公钥，保证"电路证明所引用的公钥 = 链上注册公钥"。
+- `initialize_registry` 为先到先得（任何首个调用者成为 authority）——公共集群部署时必须与程序部署同一批次完成。
 
 ---
 

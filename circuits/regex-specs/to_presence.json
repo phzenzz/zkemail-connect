@@ -1,0 +1,8 @@
+{
+  "parts": [
+    {
+      "is_public": false,
+      "regex_def": "(\\r\\n|^)to:penghe1996@gmail\\.com(\\r\\n)"
+    }
+  ]
+}
