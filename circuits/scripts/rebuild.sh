@@ -24,9 +24,10 @@
 #   7. node scripts/gen-vk-rust.mjs → build/verifying_key.rs
 #   8. cp build/verifying_key.rs ../onchain/programs/email-wallet/src/verifying_key.rs
 #
-# DEV-ONLY trusted setup: pot22_final.ptau is the local dev ptau (see setup.sh);
-# replace with a ceremony-verified ptau + multi-party contributions before any
-# testnet/mainnet deployment.
+# DEV-ONLY trusted setup: pot22_final.ptau is the Hermez Powers-of-Tau ceremony ptau
+# (power 22 of the 2^28 ceremony, Wayback snapshot — see setup.sh); the zkey built
+# here gets a single local dev contribution (step 4). Needs a real multi-party
+# contribution ceremony before any testnet/mainnet deployment.
 #
 # Usage: bash circuits/scripts/rebuild.sh   (from anywhere; cds to circuits/)
 set -euo pipefail
