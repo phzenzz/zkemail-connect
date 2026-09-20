@@ -2,7 +2,7 @@
 // 环境变量：RELAYER_EMAIL（发件邮箱，即 relayer 标识）、RELAYER_X25519_SECRET_HEX（32 字节 hex）、
 //           RPC_URL（默认 http://127.0.0.1:8899）、CLAIM_BASE_URL（默认 http://localhost:3000/claim/）
 import * as anchor from "@coral-xyz/anchor";
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair } from "@solana/web3.js";
 import fs from "fs";
 import path from "path";
 import { computeCommitment } from "../circuits/scripts/poseidon";
@@ -31,7 +31,6 @@ async function main() {
   const notifier: Notifier = new ConsoleNotifier();
 
   const idl = JSON.parse(fs.readFileSync(IDL_PATH, "utf8"));
-  const programId = new PublicKey(idl.address);
   const conn = new Connection(process.env.RPC_URL ?? "http://127.0.0.1:8899", "confirmed");
   const wallet = new anchor.Wallet(Keypair.generate());
   const provider = new anchor.AnchorProvider(conn, wallet, { commitment: "confirmed" });
@@ -42,24 +41,28 @@ async function main() {
   console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
 
   program.addEventListener("escrowCreated", async (e: any) => {
-    if (Buffer.from(e.relayerEmailHash).compare(ownHash) !== 0) return;
-    const acc = await program.account.escrow.fetch(e.escrow);
-    const recipient = openEmailCipher(Buffer.from(acc.emailCipher), secret);
-    if (!recipient) {
-      console.error(`[indexer] ${e.escrow.toBase58()}: decrypt failed, drop`);
-      return;
+    try {
+      if (Buffer.from(e.relayerEmailHash).compare(ownHash) !== 0) return;
+      const acc = await program.account.escrow.fetch(e.escrow);
+      const recipient = openEmailCipher(Buffer.from(acc.emailCipher), secret);
+      if (!recipient) {
+        console.error(`[indexer] ${e.escrow.toBase58()}: decrypt failed, drop`);
+        return;
+      }
+      const commitment = fieldToBE(await computeCommitment(recipient));
+      if (commitment.compare(Buffer.from(e.commitment)) !== 0) {
+        console.error(`[indexer] ${e.escrow.toBase58()}: commitment mismatch, drop`);
+        return;
+      }
+      await notifier.notify(recipient, {
+        escrow: e.escrow.toBase58(),
+        sender: e.sender.toBase58(),
+        amount: e.amount.toString(),
+        claimUrl: claimBase + e.escrow.toBase58(),
+      });
+    } catch (err) {
+      console.error(`[indexer] ${e.escrow?.toBase58?.() ?? "unknown"}: handler error:`, err);
     }
-    const commitment = fieldToBE(await computeCommitment(recipient));
-    if (commitment.compare(Buffer.from(e.commitment)) !== 0) {
-      console.error(`[indexer] ${e.escrow.toBase58()}: commitment mismatch, drop`);
-      return;
-    }
-    await notifier.notify(recipient, {
-      escrow: e.escrow.toBase58(),
-      sender: e.sender.toBase58(),
-      amount: e.amount.toString(),
-      claimUrl: claimBase + e.escrow.toBase58(),
-    });
   });
 }
 
