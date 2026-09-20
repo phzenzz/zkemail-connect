@@ -30,7 +30,10 @@ pub enum ErrorCode {
     InvalidAmount,
     #[msg("commitment must be < BN254 scalar field modulus")]
     InvalidCommitment,
+    #[msg("email must be non-empty and at most 64 bytes")]
     InvalidEmail,
+    #[msg("email cipher must be non-empty and at most 137 bytes")]
     InvalidCipherSize,
+    #[msg("relayer not active")]
     RelayerNotActive,
 }

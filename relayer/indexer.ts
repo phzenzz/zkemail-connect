@@ -38,9 +38,8 @@ async function main() {
 
   const ownHash = await relayerEmailHash(email);
   console.log(`[indexer] relayer=${email.toLowerCase()} hash=${ownHash.toString("hex")}`);
-  console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
 
-  program.addEventListener("escrowCreated", async (e: any) => {
+  await program.addEventListener("escrowCreated", async (e: any) => {
     try {
       if (Buffer.from(e.relayerEmailHash).compare(ownHash) !== 0) return;
       const acc = await program.account.escrow.fetch(e.escrow);
@@ -64,6 +63,7 @@ async function main() {
       console.error(`[indexer] ${e.escrow?.toBase58?.() ?? "unknown"}: handler error:`, err);
     }
   });
+  console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
 }
 
 main().catch((e) => { console.error("[indexer] FAIL:", e?.message ?? e); process.exit(1); });
