@@ -8,7 +8,7 @@ pub enum RegistryStatus {
 }
 
 pub const MAX_EMAIL_LEN: usize = 64;
-pub const MAX_CIPHER_LEN: usize = 121; // 1 + 32 + 24 + 64
+pub const MAX_CIPHER_LEN: usize = 137; // 1 + 32 + 24 header + 64 plaintext + 16 Poly1305 MAC
 
 /// v1: 仅不可退款托管。账户存在即 Open；claim 成功即关闭（租金退 sender）。
 /// v2 若恢复可退款模式：重新引入 mode/expiry/status 字段（见 PRD §4.4 备注）。

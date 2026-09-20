@@ -254,10 +254,10 @@ describe("create_escrow", () => {
       .signers([sender]).rpc()).to.be.rejectedWith(/RelayerNotActive/);
   });
 
-  it("rejects oversize cipher (>121B)", async () => {
+  it("rejects oversize cipher (>137B)", async () => {
     const c = randomFieldCommitment();
     await expect(program.methods
-      .createEscrow(Array.from(c), new anchor.BN(1), randomBytes(122), Array.from(relayerHash))
+      .createEscrow(Array.from(c), new anchor.BN(1), randomBytes(138), Array.from(relayerHash))
       .accounts({
         escrow: escrowPda(c, sender.publicKey), mint,
         vault: ata(mint, escrowPda(c, sender.publicKey)), senderAta,

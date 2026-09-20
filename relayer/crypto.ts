@@ -5,7 +5,7 @@ import { computeCommitment } from "../circuits/scripts/poseidon";
 
 export const CIPHER_VERSION = 1;
 const HEADER_LEN = 1 + 32 + 24; // 57
-export const MAX_CIPHER_LEN = 121; // 与链上 state::MAX_CIPHER_LEN 一致
+export const MAX_CIPHER_LEN = 137; // 与链上 state::MAX_CIPHER_LEN 一致
 
 export function sealEmailForRelayer(email: string, relayerPk: Uint8Array): Buffer {
   const plaintext = Buffer.from(email, "utf8");
@@ -31,7 +31,7 @@ export function openEmailCipher(blob: Buffer, relayerSecret: Uint8Array): string
 }
 
 export async function relayerEmailHash(email: string): Promise<Buffer> {
-  const h = await computeCommitment(email); // trim + lowercase + Poseidon(311 填充)
+  const h = await computeCommitment(email); // trim + lowercase + Poseidon(341 填充)
   let v = h;
   const b = Buffer.alloc(32);
   for (let i = 31; i >= 0; i--) {

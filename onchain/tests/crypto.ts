@@ -11,7 +11,7 @@ describe("email sealed-box crypto", () => {
   it("seal → open round-trips and matches Poseidon commitment", async () => {
     const blob = sealEmailForRelayer(EMAIL, relayer.publicKey);
     assert.equal(blob[0], 1);                    // version
-    assert.isAtMost(blob.length, 121);           // MAX_CIPHER_LEN
+    assert.isAtMost(blob.length, 137);           // MAX_CIPHER_LEN
     const opened = openEmailCipher(blob, relayer.secretKey);
     assert.equal(opened, EMAIL);                 // 大小写原样恢复
     // 与 commitment 同一哈希函数
@@ -27,5 +27,13 @@ describe("email sealed-box crypto", () => {
     const tampered = Buffer.from(blob);
     tampered[tampered.length - 1] ^= 0xff;
     assert.isNull(openEmailCipher(tampered, relayer.secretKey));
+  });
+
+  it("64-byte email produces blob within MAX_CIPHER_LEN (137)", () => {
+    const longEmail = "a".repeat(52) + "@example.com"; // 恰好 64 字节
+    assert.equal(longEmail.length, 64);
+    const blob = sealEmailForRelayer(longEmail, relayer.publicKey);
+    assert.isAtMost(blob.length, 137);
+    assert.equal(openEmailCipher(blob, relayer.secretKey), longEmail);
   });
 });
