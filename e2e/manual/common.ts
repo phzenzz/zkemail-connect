@@ -14,6 +14,8 @@ export const STATE_FILE = path.join(STATE_DIR, "state.json");
 export const PROOF_FILE = path.join(STATE_DIR, "proof.json");
 
 export const AMOUNT = 50_000_000; // 50 个代币（6 位小数）
+export const RELAYER_EMAIL = "relay@zkemail.io";
+export const PROTOCOL_FEE = 1_000_000; // 0.001 SOL
 
 export const conn = new Connection(RPC, "confirmed");
 
@@ -52,6 +54,8 @@ export interface State {
   mint?: string;
   escrow?: string;
   meta?: Record<string, unknown>;
+  /** 04 步生成的 relayer x25519 私钥（hex），供 relayer/indexer.ts 解密用。 */
+  relayerX25519Secret?: string;
 }
 
 export function loadState(): State {

@@ -1,8 +1,12 @@
-// e2e: 真实 .eml → prover 容器出证明 → 本地验证器全流程
+// e2e: 真实 .eml → prover 容器出证明 → 本地验证器全流程（v1.6：relayer 注册表 + 加密邮箱 + 手续费）
 // 用法: npm run e2e（在 repo 根目录；退出码非 0 = 失败）
 // 顺序与生产一致：先解析真实邮件（Subject = dest base58，DKIM 走真实 DNS），
-// 再建托管（createEscrow 仅 commitment + amount，v1.5），最后出证明并 claim。
+// 运营侧初始化 protocol config + 注册 relayer，sender 建托管（createEscrow v1.6：
+// commitment + amount + 加密邮箱 + relayer 标识 + 协议手续费），indexer 解密通知收件人，
+// 最后出证明并 claim。
 import { spawn, execFileSync, ChildProcess } from "child_process";
+import nacl from "tweetnacl";
+import { sealEmailForRelayer, relayerEmailHash } from "../relayer/crypto";
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import {
@@ -20,6 +24,8 @@ const EML = path.join(ROOT, "circuits/testdata/emails/e2e.eml");
 const PROOF_OUT = path.join(ROOT, "circuits/build/e2e-proof.json");
 const MINT_SUPPLY = 1_000_000_000;
 const AMOUNT = 50_000_000;
+const RELAYER_EMAIL = "relay@zkemail.io";
+const PROTOCOL_FEE = 1_000_000; // 0.001 SOL
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const fieldToBE = (s: string) => {
@@ -50,6 +56,8 @@ async function main() {
   // 0. 先解析真实邮件（relayer 公钥绑定进电路输入），拿到 dest / commitment / selector
   const relayer = Keypair.generate(); // 代付方（证明绑定它）
   const sender = Keypair.generate();  // 托管发送方
+  const relayerX25519 = nacl.box.keyPair();
+  const treasury = Keypair.generate();
   const { loadClaimEmail } = await import("../circuits/scripts/load-email");
   const { relayerToField } = await import("../circuits/scripts/poseidon");
   const email = await loadClaimEmail(EML, relayerToField(relayer.publicKey.toBytes()));
@@ -75,27 +83,81 @@ async function main() {
   const conn = new Connection(RPC, "confirmed");
   await waitRpc(conn);
 
-  for (const kp of [sender, relayer]) {
+  for (const kp of [sender, relayer, treasury]) {
     const sig = await conn.requestAirdrop(kp.publicKey, 5e9);
     await conn.confirmTransaction(sig);
   }
   console.log(`[e2e] validator up with program ${programIdStr}, sender+relayer airdropped`);
 
-  // 2. sender 侧：创建 SPL mint + 存币建托管（commitment 对应邮件 From 邮箱）
+  // 1.5 运营侧：初始化 protocol config + 注册 relayer（发件邮箱即标识）
   const idl = JSON.parse(fs.readFileSync(path.join(ROOT, "onchain/target/idl/email_wallet.json"), "utf8"));
   const provider = new anchor.AnchorProvider(conn, new anchor.Wallet(relayer), { commitment: "confirmed" });
   const program = new Program(idl, provider) as any;
+  const protocolConfig = PublicKey.findProgramAddressSync([Buffer.from("protocol")], programId)[0];
+  const relayerHash = await relayerEmailHash(RELAYER_EMAIL);
+  const relayerEntry = PublicKey.findProgramAddressSync(
+    [Buffer.from("relayer"), relayerHash], programId)[0];
+  try {
+    await program.methods.initializeProtocol(treasury.publicKey, new anchor.BN(PROTOCOL_FEE))
+      .accounts({ config: protocolConfig, payer: relayer.publicKey }).rpc();
+  } catch { /* already initialized */ }
+  await program.methods.registerRelayer(
+      RELAYER_EMAIL, Array.from(relayerHash), Array.from(relayerX25519.publicKey),
+      relayer.publicKey, new anchor.BN(0))
+    .accounts({ relayerEntry, claimAuthority: relayer.publicKey }).rpc();
+  console.log(`[e2e] relayer registered: ${RELAYER_EMAIL} entry=${relayerEntry.toBase58()}`);
 
+  // 2. sender 侧：创建 SPL mint + 存币建托管（commitment 对应邮件 From 邮箱）
   const mint = await createMint(conn, sender, sender.publicKey, null, 6);
   const senderAta = await createAccount(conn, sender, mint, sender.publicKey);
   await mintTo(conn, sender, mint, senderAta, sender, MINT_SUPPLY);
   const escrow = PublicKey.findProgramAddressSync(
     [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer()], programId)[0];
   const ata = (m: PublicKey, o: PublicKey) => anchor.utils.token.associatedAddress({ mint: m, owner: o });
-  await program.methods.createEscrow(Array.from(commitment), new anchor.BN(AMOUNT))
-    .accounts({ escrow, mint, vault: ata(mint, escrow), senderAta, sender: sender.publicKey, tokenProgram: TOKEN_PROGRAM_ID })
+
+  // 2.5 启动 relayer 索引器：必须先于 createEscrow 就绪，否则错过 escrowCreated 事件
+  const cipher = sealEmailForRelayer(email.meta.fromEmail, relayerX25519.publicKey);
+  const indexer = spawn("npx", ["tsx", "relayer/indexer.ts"], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      RELAYER_EMAIL,
+      RELAYER_X25519_SECRET_HEX: Buffer.from(relayerX25519.secretKey).toString("hex"),
+      RPC_URL: RPC,
+    },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  children.push({ kill: () => indexer.kill() } as any);
+  let listening = false;
+  let notified = false;
+  indexer.stdout!.on("data", (d: Buffer) => {
+    const line = d.toString();
+    process.stdout.write(`[indexer] ${line}`);
+    if (line.includes("listening")) listening = true;
+    if (line.includes(`[notify] to=${email.meta.fromEmail}`)) notified = true;
+  });
+  for (let i = 0; i < 30 && !listening; i++) await sleep(1000);
+  if (!listening) throw new Error("indexer did not start listening");
+  await sleep(2000); // addEventListener 在 listening 日志之后才完成 ws 订阅，留一点余量
+
+  const treasuryBefore = await conn.getBalance(treasury.publicKey);
+  await program.methods.createEscrow(
+      Array.from(commitment), new anchor.BN(AMOUNT),
+      cipher, Array.from(relayerHash))
+    .accounts({
+      escrow, mint, vault: ata(mint, escrow), senderAta, sender: sender.publicKey,
+      config: protocolConfig, treasury: treasury.publicKey, relayerEntry,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
     .signers([sender]).rpc();
   console.log(`[e2e] escrow created: ${escrow.toBase58()} amount=${AMOUNT}`);
+  const treasuryAfter = await conn.getBalance(treasury.publicKey);
+  if (treasuryAfter - treasuryBefore !== PROTOCOL_FEE) throw new Error("protocol fee not collected");
+  console.log(`[e2e] escrow created + protocol fee ${PROTOCOL_FEE} lamports collected`);
+
+  for (let i = 0; i < 30 && !notified; i++) await sleep(1000);
+  if (!notified) throw new Error("indexer did not notify recipient");
+  console.log("[e2e] indexer decrypted cipher and notified recipient");
 
   // 3. 起 prover 容器（Task 13），对真实邮件出证明
   execFileSync("docker", ["compose", "up", "-d", "--build", "prover"], { cwd: ROOT, stdio: "inherit" });
