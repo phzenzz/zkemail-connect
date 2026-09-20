@@ -57,3 +57,16 @@ export const fieldToBE = (s: string) => {
   }
   return b;
 };
+
+export function relayerEntryPda(emailHash: Buffer) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("relayer"), emailHash],
+    program.programId
+  )[0];
+}
+export function protocolConfigPda() {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("protocol")],
+    program.programId
+  )[0];
+}

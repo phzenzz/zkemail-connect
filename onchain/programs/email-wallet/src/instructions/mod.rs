@@ -4,5 +4,7 @@ pub mod create_escrow;
 pub use create_escrow::*;
 pub mod registry;
 pub use registry::*;
+pub mod relayer_registry;
+pub use relayer_registry::*;
 pub mod sweep_inbox;
 pub use sweep_inbox::*;

@@ -30,4 +30,7 @@ pub enum ErrorCode {
     InvalidAmount,
     #[msg("commitment must be < BN254 scalar field modulus")]
     InvalidCommitment,
+    InvalidEmail,
+    InvalidCipherSize,
+    RelayerNotActive,
 }

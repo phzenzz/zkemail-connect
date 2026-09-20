@@ -9,6 +9,7 @@ import {
 import { ComputeBudgetProgram, Keypair, PublicKey } from "@solana/web3.js";
 import { assert, expect } from "chai";
 import { execFileSync } from "child_process";
+import { randomBytes } from "crypto";
 import fs from "fs";
 import {
   program,
@@ -19,6 +20,8 @@ import {
   ata,
   fundSender,
   fieldToBE,
+  relayerEntryPda,
+  protocolConfigPda,
 } from "./helpers";
 
 const CLAIM_EML = "../circuits/testdata/emails/claim.eml";
@@ -28,6 +31,8 @@ const AMOUNT = 123_456;
 describe("claim", () => {
   const sender = Keypair.generate();
   const payer = Keypair.generate(); // acts as relayer (proof binds this key)
+  const treasury = Keypair.generate();
+  const relayerHash = randomBytes(32);
   let mint: PublicKey;
   let senderAta: PublicKey;
   let fixture: any;
@@ -97,15 +102,50 @@ describe("claim", () => {
       .accounts({ config: configPda(), registry: registry(), authority })
       .rpc();
 
-    // create the escrow the proof claims（v1.5: create_escrow 仅 commitment + amount）
+    // create the escrow the proof claims（v2: 加密邮箱 + relayer 标识 + 协议手续费）
+    // protocol config 先到先得；其他套件已初始化时以 authority 重置为本套件的 treasury/fee
+    try {
+      await program.methods
+        .initializeProtocol(treasury.publicKey, new anchor.BN(10_000_000))
+        .accounts({ config: protocolConfigPda(), payer: authority })
+        .rpc();
+    } catch {
+      await program.methods
+        .updateProtocol(treasury.publicKey, new anchor.BN(10_000_000))
+        .accounts({ config: protocolConfigPda(), authority })
+        .rpc();
+    }
+    // 注册本套件使用的 relayer（active 为默认）
     await program.methods
-      .createEscrow(Array.from(commitment()), new anchor.BN(AMOUNT))
+      .registerRelayer(
+        "claim-relay@zkemail.io",
+        Array.from(relayerHash),
+        Array.from(randomBytes(32)),
+        sender.publicKey,
+        new anchor.BN(0)
+      )
+      .accounts({
+        relayerEntry: relayerEntryPda(relayerHash),
+        claimAuthority: sender.publicKey,
+      })
+      .signers([sender])
+      .rpc();
+    await program.methods
+      .createEscrow(
+        Array.from(commitment()),
+        new anchor.BN(AMOUNT),
+        randomBytes(60),
+        Array.from(relayerHash)
+      )
       .accounts({
         escrow: escrowPda(commitment(), sender.publicKey),
         mint,
         vault: ata(mint, escrowPda(commitment(), sender.publicKey)),
         senderAta,
         sender: sender.publicKey,
+        config: protocolConfigPda(),
+        treasury: treasury.publicKey,
+        relayerEntry: relayerEntryPda(relayerHash),
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([sender])
