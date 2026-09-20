@@ -38,6 +38,7 @@ export PATH="$HOME/.avm/bin:$PATH"   # make anchor available
 (cd onchain && anchor build && cargo test -p email-wallet && anchor test)
 npm run prover:up && curl -s localhost:8080/health && npm run prover:down
 npm run e2e                          # starts the prover container + validator itself
+                                     # (manual step-by-step version: docs/手动测试指南.md)
 npx tsc --noEmit
 ```
 

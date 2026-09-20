@@ -6,10 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-email_wallet = "5Dte2nXTSr5yLpr1MAH8QhjxfaHo4BbszutNyuTq3A45"
-
-[registry]
-url = "https://api.apr.dev"
+email_wallet = "9Bk8J1CK23pH6zB5CMNZZvNimTfGeeAaHxopNbjURfBR"
 
 [provider]
 cluster = "localnet"
@@ -17,3 +14,5 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+
+[hooks]

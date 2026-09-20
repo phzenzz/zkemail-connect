@@ -45,14 +45,16 @@ if [ -f "$PTAU" ]; then
   fi
 else
   echo "[setup] downloading Hermez ceremony ptau (~4.8GB via Wayback, slow)"
-  if ! curl -fL --retry 3 -o "$PTAU.tmp" \
+  # -C - resumes from an existing .tmp file; --retry-all-errors retries the HTTP/2
+  # stream errors Wayback often throws, and each retry continues where it stopped.
+  if ! curl -fL -C - --retry 10 --retry-all-errors --retry-delay 5 -o "$PTAU.tmp" \
     https://web.archive.org/web/20250726170323/https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_22.ptau; then
-    echo "[setup] ERROR: download failed. Delete $PTAU.tmp and retry." >&2
+    echo "[setup] ERROR: download failed. Rerun this script to resume from $PTAU.tmp." >&2
     exit 1
   fi
   DOWNLOADED_SIZE=$(file_size "$PTAU.tmp")
   if [ "$DOWNLOADED_SIZE" != "$EXPECTED_SIZE" ]; then
-    echo "[setup] ERROR: downloaded ptau is $DOWNLOADED_SIZE bytes, expected $EXPECTED_SIZE (truncated/corrupt)." >&2
+    echo "[setup] ERROR: downloaded ptau is $DOWNLOADED_SIZE bytes, expected $EXPECTED_SIZE (corrupt)." >&2
     echo "[setup] Delete $PTAU.tmp and retry." >&2
     exit 1
   fi

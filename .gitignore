@@ -8,3 +8,5 @@ circuits/testdata/emails/*.eml
 .worktrees/
 .superpowers/
 docs/superpowers/
+.manual-test/
+test-ledger/

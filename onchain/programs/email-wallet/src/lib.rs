@@ -8,7 +8,7 @@ pub mod zk;
 
 use instructions::*;
 
-declare_id!("5Dte2nXTSr5yLpr1MAH8QhjxfaHo4BbszutNyuTq3A45");
+declare_id!("9Bk8J1CK23pH6zB5CMNZZvNimTfGeeAaHxopNbjURfBR");
 
 #[program]
 pub mod email_wallet {
