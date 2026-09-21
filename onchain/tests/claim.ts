@@ -220,6 +220,60 @@ describe("claim", () => {
       payer.publicKey
     );
 
+  it("rejects claim when escrow relayer email hash mismatches proof", async () => {
+    // 另一个 relayer entry（不同邮箱哈希）建的 escrow，commitment 相同；
+    // proof 的 relayerEmailHash 绑的是 eml 的 To → 必须 revert RelayerEmailHashMismatch。
+    // 注意：本用例必须排在成功 claim 之前——nullifier 一旦被花掉，
+    // 失败会发生在 init 阶段（system 0x0）而非 handler 的 RelayerEmailHashMismatch。
+    // tx 原子回滚：失败不花 nullifier，后续成功 claim 不受影响。
+    const sender2 = Keypair.generate();
+    const otherHash = randomBytes(32);
+    await fundSender(sender2);
+    const sender2Ata = await createAccount(provider.connection, sender2, mint, sender2.publicKey);
+    await mintTo(provider.connection, sender, mint, sender2Ata, sender, AMOUNT);
+    await program.methods
+      .registerRelayer(
+        "other-relay@zkemail.io",
+        Array.from(otherHash),
+        Array.from(randomBytes(32)),
+        sender2.publicKey,
+        new anchor.BN(0)
+      )
+      .accounts({
+        relayerEntry: relayerEntryPda(otherHash),
+        claimAuthority: sender2.publicKey,
+      })
+      .signers([sender2])
+      .rpc();
+    const escrow2 = escrowPda(commitment(), sender2.publicKey);
+    await program.methods
+      .createEscrow(
+        Array.from(commitment()),
+        new anchor.BN(AMOUNT),
+        randomBytes(60),
+        Array.from(otherHash)
+      )
+      .accounts({
+        escrow: escrow2,
+        mint,
+        vault: ata(mint, escrow2),
+        senderAta: sender2Ata,
+        sender: sender2.publicKey,
+        config: protocolConfigPda(),
+        treasury: treasury.publicKey,
+        relayerEntry: relayerEntryPda(otherHash),
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([sender2])
+      .rpc();
+
+    // 不断言 custom program error 兜底：那会吞掉 nullifier init 的 system 0x0 假阳性。
+    // 命中 handler 时为程序 600X 段错误（6018 RelayerEmailHashMismatch，见 claim.rs require!）。
+    await expect(claimV0(escrow2, sender2.publicKey)).to.be.rejectedWith(
+      /RelayerEmailHashMismatch|relayer email hash/i
+    );
+  });
+
   it("claim transfers funds to proof-bound dest and closes escrow", async () => {
     const sig = await claimV0();
 
@@ -283,54 +337,5 @@ describe("claim", () => {
       ata(mint, escrowPda(commitment(), sender.publicKey))
     );
     assert.equal(vault.amount.toString(), AMOUNT.toString());
-  });
-
-  it("rejects claim when escrow relayer email hash mismatches proof", async () => {
-    // 另一个 relayer entry（不同邮箱哈希）建的 escrow，commitment 相同；
-    // proof 的 relayerEmailHash 绑的是 eml 的 To → 必须 revert RelayerEmailHashMismatch。
-    const sender2 = Keypair.generate();
-    const otherHash = randomBytes(32);
-    await fundSender(sender2);
-    const sender2Ata = await createAccount(provider.connection, sender2, mint, sender2.publicKey);
-    await mintTo(provider.connection, sender, mint, sender2Ata, sender, AMOUNT);
-    await program.methods
-      .registerRelayer(
-        "other-relay@zkemail.io",
-        Array.from(otherHash),
-        Array.from(randomBytes(32)),
-        sender2.publicKey,
-        new anchor.BN(0)
-      )
-      .accounts({
-        relayerEntry: relayerEntryPda(otherHash),
-        claimAuthority: sender2.publicKey,
-      })
-      .signers([sender2])
-      .rpc();
-    const escrow2 = escrowPda(commitment(), sender2.publicKey);
-    await program.methods
-      .createEscrow(
-        Array.from(commitment()),
-        new anchor.BN(AMOUNT),
-        randomBytes(60),
-        Array.from(otherHash)
-      )
-      .accounts({
-        escrow: escrow2,
-        mint,
-        vault: ata(mint, escrow2),
-        senderAta: sender2Ata,
-        sender: sender2.publicKey,
-        config: protocolConfigPda(),
-        treasury: treasury.publicKey,
-        relayerEntry: relayerEntryPda(otherHash),
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([sender2])
-      .rpc();
-
-    await expect(claimV0(escrow2, sender2.publicKey)).to.be.rejectedWith(
-      /RelayerEmailHashMismatch|relayer email hash|custom program error/i
-    );
   });
 });
