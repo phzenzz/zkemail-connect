@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 
 pub mod errors;
+pub mod events;
 pub mod instructions;
 pub mod state;
 pub mod verifying_key;
@@ -18,8 +19,48 @@ pub mod email_wallet {
         ctx: Context<CreateEscrow>,
         commitment: [u8; 32],
         amount: u64,
+        email_cipher: Vec<u8>,
+        relayer_email_hash: [u8; 32],
     ) -> Result<()> {
-        instructions::create_escrow(ctx, commitment, amount)
+        instructions::create_escrow(ctx, commitment, amount, email_cipher, relayer_email_hash)
+    }
+
+    pub fn initialize_protocol(
+        ctx: Context<InitializeProtocol>,
+        treasury: Pubkey,
+        fee_lamports: u64,
+    ) -> Result<()> {
+        instructions::initialize_protocol(ctx, treasury, fee_lamports)
+    }
+
+    pub fn update_protocol(
+        ctx: Context<UpdateProtocol>,
+        treasury: Option<Pubkey>,
+        fee_lamports: Option<u64>,
+    ) -> Result<()> {
+        instructions::update_protocol(ctx, treasury, fee_lamports)
+    }
+
+    pub fn register_relayer(
+        ctx: Context<RegisterRelayer>,
+        email: String,
+        email_hash: [u8; 32],
+        x25519_key: [u8; 32],
+        claim_address: Pubkey,
+        fee: u64,
+    ) -> Result<()> {
+        instructions::register_relayer(ctx, email, email_hash, x25519_key, claim_address, fee)
+    }
+
+    pub fn update_relayer(
+        ctx: Context<UpdateRelayer>,
+        email_hash: [u8; 32],
+        x25519_key: Option<[u8; 32]>,
+        claim_address: Option<Pubkey>,
+        fee: Option<u64>,
+        active: Option<bool>,
+    ) -> Result<()> {
+        instructions::update_relayer(ctx, email_hash, x25519_key, claim_address, fee, active)
     }
 
     pub fn initialize_registry(ctx: Context<InitializeRegistry>, authority: Pubkey) -> Result<()> {

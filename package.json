@@ -11,7 +11,8 @@
     "circuit:test": "cd circuits && npm test",
     "prover:up": "docker compose up -d --build prover",
     "prover:down": "docker compose down",
-    "e2e": "npx tsx e2e/e2e.ts"
+    "e2e": "npx tsx e2e/e2e.ts",
+    "relayer:index": "npx tsx relayer/indexer.ts"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",
@@ -19,6 +20,7 @@
     "@solana/web3.js": "^1.99.0",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
+    "tweetnacl": "^1.0.3",
     "typescript": "^5.6.0"
   }
 }

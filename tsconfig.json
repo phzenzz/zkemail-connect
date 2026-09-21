@@ -4,5 +4,5 @@
     "esModuleInterop": true, "strict": true, "skipLibCheck": true,
     "resolveJsonModule": true, "outDir": "dist"
   },
-  "include": ["circuits/scripts", "circuits/tests", "e2e"]
+  "include": ["circuits/scripts", "circuits/tests", "e2e", "relayer"]
 }
