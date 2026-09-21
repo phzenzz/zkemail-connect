@@ -8,24 +8,31 @@ include "@zk-email/zk-regex-circom/circuits/common/timestamp_regex.circom";
 include "circomlib/circuits/poseidon.circom";
 include "./lib/pack.circom";
 include "./lib/digits.circom";
-include "./regexes/to_presence_regex.circom";
+include "./regexes/to_addr_regex.circom";
 include "./regexes/subject_addr_regex.circom";
 
 // Claim circuit: proves "a DKIM-valid email exists whose From hashes to commitment,
-// whose To is the configured relay mailbox (circuits/relay.config.json; production
-// default claim@relay.xyz), whose Subject is exactly a base58
-// address (dest)", revealing dest + relayer + timestamp, hiding the email address.
+// whose To addr-spec hashes to relayerEmailHash (the relayer's registered mailbox —
+// checked on-chain against the escrow's relayer_email_hash), whose Subject is exactly
+// a base58 address (dest)", revealing dest + relayer + timestamp + a per-email
+// nullifier, hiding the email address.
 //
 // Public signals (order fixed, on-chain program depends on it):
-//   [pubkeyHash, commitment, timestamp, relayer, destA, destB, domainCommitment]
+//   [pubkeyHash, commitment, timestamp, relayer, destA, destB, domainCommitment,
+//    emailNullifier, relayerEmailHash]
 //
 // SECURITY NOTE: `timestamp` comes from the DKIM-Signature header's `t=` tag. That tag
 // sits inside the hashed header bytes (the DKIM-Signature header is hashed with b=
 // emptied), but the `t=` value itself is not bound by any other field, so a malicious
-// prover can forge the timestamp to pass a freshness window. Real replay protection
-// (v1.5): the Escrow account closes on claim (one-shot state machine), dest is bound
-// into the proof (an old proof only ever pays the same legitimate recipient), and the
-// on-chain 48h window bounds proof age. Production hardening: switch to an RFC5322
+// prover can forge the timestamp to pass a freshness window. Real replay protection:
+// the C9 email nullifier (double Poseidon over the DKIM RSA signature) is globally
+// unique per email and enforced on-chain (one nullifier account per email; claim and
+// sweep share the set, so an old proof cannot be replayed at any age). The Escrow
+// account still closes on claim (one-shot state machine), dest is bound into the
+// proof (an old proof only ever pays the same legitimate recipient), and the on-chain
+// 48h timestamp window — becoming a configurable ProtocolConfig parameter with a
+// 30-day default (chain side, Task 3) — is demoted to a DKIM-revoke fail-safe rather
+// than the primary replay barrier. Production hardening: switch to an RFC5322
 // `Date:` parsing circuit (high cost, deferred).
 template ClaimCircuit(maxHeadersLength, n, k) {
     var MAX_EMAIL_LEN = 341;   // 11 chunks of 31 bytes
@@ -42,6 +49,7 @@ template ClaimCircuit(maxHeadersLength, n, k) {
     signal input signature[k];
     signal input fromAddrIdx;
     signal input subjectAddrIdx;
+    signal input toAddrIdx;
     signal input timestampIdx;
 
     // ---- public signals (constrained equal to computed values below)
@@ -52,6 +60,8 @@ template ClaimCircuit(maxHeadersLength, n, k) {
     signal input destA;
     signal input destB;
     signal input domainCommitment;
+    signal input emailNullifier;
+    signal input relayerEmailHash;
 
     // C1-C3: DKIM RSA-2048 verify over canonicalized signed headers, body hash ignored.
     component ev = EmailVerifier(maxHeadersLength, 0, n, k, 1, 0, 0, 0);
@@ -71,10 +81,15 @@ template ClaimCircuit(maxHeadersLength, n, k) {
     signal commitmentComputed <== Poseidon(EMAIL_CHUNKS)(emailChunks);
     commitment === commitmentComputed;
 
-    // C6: To is exactly the configured relay address (v1.5.1; match-only presence,
-    // address from relay.config.json, compiled into the ToPresenceRegex DFA)
-    signal toOut <== ToPresenceRegex(maxHeadersLength)(emailHeader);
-    toOut === 1;
+    // C6': To addr-spec -> 必须小写(已签名头不可改) -> Poseidon == relayerEmailHash
+    signal tOut; signal tReveal[maxHeadersLength];
+    (tOut, tReveal) <== ToAddrRegex(maxHeadersLength)(emailHeader);
+    tOut === 1;
+    signal toAddr[MAX_EMAIL_LEN] <== SelectRegexReveal(maxHeadersLength, MAX_EMAIL_LEN)(tReveal, toAddrIdx);
+    AssertNotUppercase(MAX_EMAIL_LEN)(toAddr);
+    signal toChunks[EMAIL_CHUNKS] <== PackBytes31xN(MAX_EMAIL_LEN, EMAIL_CHUNKS)(toAddr);
+    signal relayerEmailHashComputed <== Poseidon(EMAIL_CHUNKS)(toChunks);
+    relayerEmailHash === relayerEmailHashComputed;
 
     // C7 (structural): from-domain -> Poseidon == domainCommitment.
     // On-chain, the DKIM registry PDA is derived from domainCommitment and must hold
@@ -112,6 +127,22 @@ template ClaimCircuit(maxHeadersLength, n, k) {
     for (var i = 0; i < 13; i++) packB.in[i] <== destBytes[31 + i];
     destB === packB.out;
 
+    // C9: 邮件 nullifier = Poseidon(PoseidonLarge(121,17)(signature))
+    // 与 zk-email-verify email-nullifier.circom 同构；17 limbs 相邻合并为 9
+    signal sigMerged[9];
+    for (var i = 0; i < 9; i++) {
+        // i=8 时无第 18 个 limb（signature 共 17 项），奇数位按 0 处理——
+        // 与链下 computePubkeyHash 的 `(limbs[2i+1] ?? 0n)` 语义对齐（RSA-2048 签名第 17 limb 以上恒为 0）
+        if (i < 8) {
+            sigMerged[i] <== signature[2 * i] + signature[2 * i + 1] * (1 << 121);
+        } else {
+            sigMerged[8] <== signature[16];
+        }
+    }
+    signal sigHash <== Poseidon(9)(sigMerged);
+    signal emailNullifierComputed <== Poseidon(1)([sigHash]);
+    emailNullifier === emailNullifierComputed;
+
     // relayer: pass-through public signal, bound into the proof; checked on-chain
     // against the fee payer (pubkey mod Fr). No constraint needed here.
     signal relayerBound <== relayer;
@@ -119,4 +150,4 @@ template ClaimCircuit(maxHeadersLength, n, k) {
 
 // maxHeadersLength = 1024 (fallback from 2048: at 2048 the circuit is ~10.7M constraints,
 // over the ptau22 budget of 2^22 = 4,194,304; canonicalized headers of real replies are ~1KB).
-component main {public [pubkeyHash, commitment, timestamp, relayer, destA, destB, domainCommitment]} = ClaimCircuit(1024, 121, 17);
+component main {public [pubkeyHash, commitment, timestamp, relayer, destA, destB, domainCommitment, emailNullifier, relayerEmailHash]} = ClaimCircuit(1024, 121, 17);

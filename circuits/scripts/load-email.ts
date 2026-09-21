@@ -8,7 +8,7 @@ import { getRelayAddress, relayAddressRegexEscaped } from "./relay-config";
 
 export const MAX_HEADER_LEN = 1024;
 export const MAX_DEST_LEN = 44;
-const FRESHNESS_SECS = 48 * 3600; // 与链上 TIMESTAMP_WINDOW_PAST 对齐
+const FRESHNESS_SECS = Number(process.env.TIMESTAMP_WINDOW_SECS ?? 30 * 24 * 3600); // 客户端 fail-fast，默认 30 天与链上 ProtocolConfig 对齐
 
 export interface LoadedEmail {
   rawEmail: Buffer;
