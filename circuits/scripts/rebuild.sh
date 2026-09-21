@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# Full circuit rebuild after changing the relay address (circuits/relay.config.json
-# or RELAY_ADDRESS). The relay address is compiled into the ToPresenceRegex DFA, so
-# ANY change requires the whole chain below — this script runs it end to end
-# (ptau is reused, ~10 min total; constraint count must stay < 2^22):
+# Full trusted-setup rebuild after changing the circuit (circuits/src/claim.circom
+# or a checked-in regex spec). to_addr_regex.circom is a STATIC spec — the relay
+# address is NOT compiled into any DFA anymore — so step 1 only verifies the
+# artifact exists. The ptau is reused, ~10 min total; constraint count must stay
+# < 2^22:
 #
-#   1. npx tsx scripts/gen-regexes.ts
-#        render circuits/regex-specs/to_presence.json from the configured address
-#        (`(\r\n|^)to:<escaped-addr>(\r\n)`, match-only) and regenerate
-#        circuits/src/regexes/to_presence_regex.circom via `zk-regex decomposed`
-#        (appends the template's closing `}` — installed zk-regex 2.3.2 no-reveal quirk)
+#   1. test -f src/regexes/to_addr_regex.circom
+#        existence check for the static to_addr spec (to_addr.json /
+#        to_addr_regex.circom are checked in; gen-regexes.ts is retired and
+#        prints a one-line notice when invoked directly)
 #   2. bash scripts/compile.sh
 #        circom --O2 → build/claim.{r1cs,wasm,sym}; prints the constraint count
 #   3. npx snarkjs groth16 setup build/claim.r1cs build/pot22_final.ptau build/claim_final.zkey
@@ -20,7 +20,7 @@
 #   5. npx snarkjs zkey verify build/claim.r1cs build/pot22_final.ptau build/claim_final.zkey
 #      → must print "ZKey Ok!" (tee'd to build/zkey-verify.log)
 #   6. npx snarkjs zkey export verificationkey build/claim_final.zkey build/verification_key.json
-#      (check: vk_delta_2 != vk_gamma_2, IC = 8 / nr_pubinputs = 7)
+#      (check: vk_delta_2 != vk_gamma_2, IC = 10 / nr_pubinputs = 9)
 #   7. node scripts/gen-vk-rust.mjs → build/verifying_key.rs
 #   8. cp build/verifying_key.rs ../onchain/programs/email-wallet/src/verifying_key.rs
 #
@@ -34,8 +34,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export NODE_OPTIONS="--max-old-space-size=16384"
 
-echo "[rebuild] 1/6 regenerate To-presence regex from configured relay address"
-npx tsx scripts/gen-regexes.ts
+echo "[rebuild] 1/6 check to_addr static regex spec exists"
+test -f src/regexes/to_addr_regex.circom || { echo "[rebuild] ERROR: missing src/regexes/to_addr_regex.circom (static spec, checked in)" >&2; exit 1; }
 
 echo "[rebuild] 2/6 compile circuit"
 bash scripts/compile.sh

@@ -4,9 +4,9 @@
 # NOTE (v1.6): to_addr_regex.circom is a static artifact (regex-specs/to_addr.json,
 # checked in) — the relay address is NOT compiled into any DFA anymore. This script
 # alone suffices for witness/unit tests; proof-key changes require the full
-# `bash circuits/scripts/rebuild.sh` chain (gen-regexes → compile → groth16 setup →
-# contribute → zkey verify → export vk → gen-vk-rust → copy verifying_key.rs),
-# documented step-by-step in rebuild.sh's header.
+# `bash circuits/scripts/rebuild.sh` chain (to_addr spec existence check → compile →
+# groth16 setup → contribute → zkey verify → export vk → gen-vk-rust → copy
+# verifying_key.rs), documented step-by-step in rebuild.sh's header.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build
