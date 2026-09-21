@@ -61,7 +61,7 @@ export interface ImapFlowLike {
   getMailboxLock(path: string): Promise<{ release(): void }>;
   fetchOne(range: string, query: object, opts?: object): Promise<any>;
   messageFlagsAdd(range: string, flags: string[], opts?: object): Promise<any>;
-  search(query: object): Promise<false | number[]>;
+  search(query: object, opts?: object): Promise<false | number[]>;
   logout(): Promise<void>;
 }
 
@@ -103,7 +103,7 @@ export async function runInbound(deps: InboundDeps, client: ImapFlowLike): Promi
     try {
       const lock = await client.getMailboxLock("INBOX");
       try {
-        const uids = (await client.search({ unseen: true })) || [];
+        const uids = (await client.search({ unseen: true }, { uid: true })) || [];
         for (const uid of uids) {
           const msg = await client.fetchOne(String(uid), { source: true }, { uid: true });
           if (!msg?.source) continue;
@@ -118,7 +118,10 @@ export async function runInbound(deps: InboundDeps, client: ImapFlowLike): Promi
     } catch (e) {
       console.error("[inbound] poll error:", (e as Error)?.message ?? e);
     }
-    await new Promise((r) => setTimeout(r, deps.pollMs ?? 30_000));
+    await new Promise((r) => {
+      const t = setTimeout(r, deps.pollMs ?? 30_000);
+      (t as any).unref?.(); // 长驻循环的定时器不阻止进程退出
+    });
   }
 }
 

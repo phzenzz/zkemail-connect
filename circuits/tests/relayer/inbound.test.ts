@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { Connection, Keypair } from "@solana/web3.js";
-import { extractFromAndSubject, findOpenEscrow } from "../../../relayer/inbound";
+import { extractFromAndSubject, findOpenEscrow, runInbound } from "../../../relayer/inbound";
 
 // rpc-websockets 的嵌套依赖 uuid@14 为纯 ESM,jest 默认不转换 node_modules 而解析失败;
 // 运行时 Node 20.19+ 的 require(esm) 正常。本测试只用 Connection/Keypair(不走 websocket),
@@ -50,5 +50,29 @@ describe("findOpenEscrow", () => {
     expect(callArgs[1].filters[0]).toEqual({ dataSize: 286 });
     expect(callArgs[1].filters[1].memcmp.offset).toBe(8);
     expect(typeof callArgs[1].filters[1].memcmp.bytes).toBe("string");
+  });
+});
+
+describe("runInbound", () => {
+  it("searches unseen by UID so seq numbers are never used as UIDs", async () => {
+    const search = jest.fn<(...args: any[]) => any>().mockResolvedValue([]);
+    const client = {
+      connect: jest.fn<(...args: any[]) => any>().mockResolvedValue(undefined),
+      getMailboxLock: jest.fn<(...args: any[]) => any>().mockResolvedValue({ release: jest.fn() }),
+      fetchOne: jest.fn<(...args: any[]) => any>(),
+      messageFlagsAdd: jest.fn<(...args: any[]) => any>(),
+      search,
+      logout: jest.fn<(...args: any[]) => any>(),
+    };
+    const deps = {
+      connection: {} as unknown as Connection,
+      programId: Keypair.generate().publicKey,
+      notifier: { notify: jest.fn<(...args: any[]) => any>() },
+      onClaimable: jest.fn<(...args: any[]) => any>(),
+      pollMs: 60_000, // 长驻循环不退出;首轮断言后即可结束测试
+    };
+    void runInbound(deps, client);
+    await new Promise((r) => setImmediate(r)); // 等首轮轮询执行完
+    expect(search).toHaveBeenCalledWith({ unseen: true }, { uid: true });
   });
 });
