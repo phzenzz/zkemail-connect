@@ -19,11 +19,15 @@
     "relayer:run": "npx tsx relayer/index.ts",
     "crypto-parity": "cd app && npx tsx scripts/crypto-parity.ts"
   },
+  "dependencies": {
+    "nodemailer": "^6.9.16"
+  },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
     "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.17",
     "tsx": "^4.19.0",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.6.0"
