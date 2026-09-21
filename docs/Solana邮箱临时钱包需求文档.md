@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档版本 | v1.5（v1 再简化：移除 escrow_id——邮件 To 固定为系统邮箱 claim@relay.xyz，不再区分同一(发送方,邮箱)的多笔托管；防重放 = 账户关闭 + dest 绑定 + 48h 时间窗） |
+| 文档版本 | v1.7（在 v1.5 之上：恢复邮件 nullifier——`Poseidon(PoseidonLarge(DKIM 签名))`，claim/sweep 共享、全局 exactly-once；电路 To 地址哈希绑定兑现 relayer 1:1；DKIM 时间窗改链上 `ProtocolConfig.timestamp_window_past` 可配、默认 30 天。v1.5 的"防重放 = 账户关闭 + dest 绑定 + 48h 窗口"被取代，见 §7.2 / §10 修订注记） |
 | 状态 | 草案 |
 | 目标链 | Solana（主网） |
 | 核心技术 | zkEmail（Circom / Groth16 / BN254）、Solana `alt_bn128` syscall |
@@ -112,8 +112,8 @@ Solana 自 v1.18 起在主网激活 `alt_bn128` 系列 syscall，原生支持 BN
 | FR-CLM-1 | 接收方打开通知邮件，点击领取链接 `https://app.xyz/c/<escrow 地址>`，进入 Claim Page |
 | FR-CLM-2 | Claim Page 引导接收方**粘贴自己的 Solana 收款地址（dest）**，前端做 base58 格式校验并完整回显要求确认 |
 | FR-CLM-3 | 确认后页面生成"一键发信"按钮：`mailto:claim@relay.xyz?subject=<dest>`。用户点击后邮件客户端弹出一封**新邮件**——收件人（系统邮箱 claim@relay.xyz）与标题（= dest）均已自动填好，**正文留空，用户只需点发送**。此为唯一指定的发信方式；若用户改用客户端"回复"按钮（标题为 `Re: 原标题`，不含地址），Relayer 收信后自动回信引导其使用 Claim Page 按钮 |
-| FR-CLM-4 | Relayer 收到邮件后：(a) 解析 `Subject` 中的 dest 并定位对应的开放托管（同邮箱可能有多笔来自不同发送方的托管，v1 语义见 §10"跨托管领取"）；(b) 提取原始 `.eml`，送入 Prover 生成证明 |
-| FR-CLM-5 | 电路证明（见 §7）：DKIM 签名有效 且 `From` 地址的 Poseidon 哈希 == commitment 且 `To` 为系统邮箱 `claim@relay.xyz`（意图绑定，防"巧合邮件"被利用）且 `Subject` 恰为一个合法 base58 地址（作为公开输出 dest）且 DKIM `d=` 域名与 `From` 域名对齐 且 `Date` 在时间窗内 |
+| FR-CLM-4 | Relayer 收到邮件后：(a) 解析 `Subject` 中的 dest 并定位对应的开放托管（同邮箱可能有多笔来自不同发送方的托管，v1.7 起一封邮件只能领取其中一笔，见 §10）；(b) 提取原始 `.eml`，送入 Prover 生成证明 |
+| FR-CLM-5 | 电路证明（见 §7）：DKIM 签名有效 且 `From` 地址的 Poseidon 哈希 == commitment 且 `To` 地址（addr-spec）的 Poseidon 哈希 == `relayerEmailHash`（v1.7 起替换 v1.5 的"To 为系统邮箱"存在性匹配：兑现 relayer 1:1 绑定，链上 claim 时与 escrow 登记的 `relayer_email_hash` 比对，防 proof 跨 relayer 重放）且 `Subject` 恰为一个合法 base58 地址（作为公开输出 dest）且 DKIM `d=` 域名与 `From` 域名对齐 且 DKIM `t=` 在时间窗内 |
 | FR-CLM-6 | Relayer 组装**单笔 Solana 交易**调用 `claim` 指令：验证 Groth16 证明 → 链上解码证明公开输出中的 dest → 将 Escrow ATA 中全部代币转入 dest → 关闭 Escrow（租金返还发送方）。**dest 来自电路公开输出，Relayer 无法替换；领取与转账在同一交易内原子完成** |
 | FR-CLM-7 | 领取完成后，链上公开记录 `commitment + dest + amount`；应用内展示邮箱（打码或明文，见 §11 隐私策略），任何人可重算哈希验证承诺一致 |
 
@@ -160,7 +160,7 @@ dest 已由电路从 DKIM 签名的 Subject 中提取并绑定（§4.2.1），**
 | 编号 | 需求 |
 | --- | --- |
 | FR-INB-1 | 派生 `Inbox PDA`，seeds = `["inbox", commitment]`，作为该邮箱的**公开收款地址**：任何人可像普通地址一样直接向其转入 SPL 代币，无需发送方创建任何链上状态 |
-| FR-INB-2 | 邮箱主人走与 §4.2 相同的领取流程（粘贴地址 → 一键发信），`sweep_inbox` 指令将全部代币原子转入证明绑定的 dest；支持一次交易扫描多个 mint（多个 ATA）。**v1.5 起 sweep 不再记录 nullifier**：用旧证明重复 sweep 只会把新增余额继续转入同一个 dest（证明绑定），无资金风险；Relayer 链下去重即可 |
+| FR-INB-2 | 邮箱主人走与 §4.2 相同的领取流程（粘贴地址 → 一键发信），`sweep_inbox` 指令将全部代币原子转入证明绑定的 dest；支持一次交易扫描多个 mint（多个 ATA）。**v1.7 起 sweep 与 claim 共享全局邮件 nullifier**（PDA seeds = `["nullifier", email_nullifier]`）：同一封邮件的证明只能用一次，v1.5 的"一证终身扫新增"作废——sweep 之后再进账的余额需再发一封邮件出新的证明 |
 | FR-INB-3 | Inbox 不持有任何密钥、不能签名、只收不发（除 sweep）——保持"临时钱包只做转账"的定位，它仅是收款入口 |
 | FR-INB-4 | 发送方创建 Escrow 与直接转入 Inbox 两种路径并存：前者适合"指定金额+独立托管账户+领取记录"的定向发放，后者适合开放式收款 |
 
@@ -209,8 +209,8 @@ sequenceDiagram
 
 | 编号 | 需求 | 指标 |
 | --- | --- | --- |
-| NFR-1 | claim 交易 CU | < 150,000 CU（证明验证 ~109k + 转账，无签名验证步骤）（v1 实测 173,868 CU，超目标，原因：7 公开输入+SPL CPI+账户关闭；v2 优化项） |
-| NFR-2 | 单笔交易大小 | < 1232 B（证明 256 B + 公开输入 8 field = 256 B + 账户，满足） |
+| NFR-1 | claim 交易 CU | < 150,000 CU（证明验证 ~109k + 转账，无签名验证步骤）（v1 实测 173,868 CU，超目标，原因：9 公开输入+SPL CPI+账户关闭；v2 优化项） |
+| NFR-2 | 单笔交易大小 | < 1232 B（证明 256 B + 公开输入 9 field = 288 B + 账户，满足） |
 | NFR-3 | 证明生成延迟 | Relayer 服务器端 rapidsnark < 30 s |
 | NFR-4 | 用户端到端领取时长 | < 2 min（不含邮件投递时间） |
 | NFR-5 | 支持的邮箱服务商覆盖率 | 个人邮箱 Top 10（Gmail/Outlook/QQ/163/iCloud/Yahoo/Proton 等）出站 DKIM 全覆盖 |
@@ -298,7 +298,7 @@ DKIM 的 RSA 签名覆盖头部哈希，头部哈希中把 `bh=`（正文哈希�
 
 证明一个六元组关系：
 
-> "存在一封 DKIM 签名有效的邮件，其 `From` 是某个邮箱 E（Poseidon(E) = commitment），其 `To` 是系统邮箱 claim@relay.xyz，其 `Subject` 恰为某个合法 base58 地址 D，签名域与 E 的域名对齐，且 Date 在时间窗内" —— 且不泄露 E 本身，但公开 D（dest）。
+> "存在一封 DKIM 签名有效的邮件，其 `From` 是某个邮箱 E（Poseidon(E) = commitment），其 `To` 地址的 Poseidon 哈希 == relayerEmailHash（relayer 入站邮箱，链上与 escrow 登记值比对），其 `Subject` 恰为某个合法 base58 地址 D，签名域与 E 的域名对齐，且 DKIM `t=` 在时间窗内" —— 且不泄露 E 本身，但公开 D（dest）、邮件 nullifier 与 relayerEmailHash。
 
 ### 7.2 输入输出
 
@@ -312,18 +312,22 @@ DKIM 的 RSA 签名覆盖头部哈希，头部哈希中把 `bh=`（正文哈希�
 | `rsa_pubkey_n` | DKIM 公钥模数 n |
 | `header_selector` | 各字段在 header 中的起止位置（电路内断言一致） |
 
-**公开输出（7 个 field，v1.5 起）：**
+**公开输出（9 个 field，v1.7 起；顺序固定，链上依赖）：**
 
 | 输出 | 说明 |
 | --- | --- |
 | `pubkey_hash` | `Poseidon(rsa_pubkey_n)`，链上与 DKIM Registry PDA 中存储值比对 |
 | `commitment` | `Poseidon(email_address)`，与 Escrow.commitment 比对 |
-| `timestamp` | DKIM `t=` 的 Unix 时间，链上校验在窗口内（防旧邮件重放） |
+| `timestamp` | DKIM `t=` 的 Unix 时间，链上校验在窗口内：`now - ProtocolConfig.timestamp_window_past ≤ ts ≤ now + 600s`（窗口默认 30 天、authority 可更新，见 §8.2；防重放主责已移交 nullifier，窗口退居 DKIM revoke 失效边界） |
 | `relayer` | Relayer 地址（绑定证明，防止第三方抢跑偷取代领手续费） |
 | `dest_a` / `dest_b` | Subject 中的 base58 地址（≤ 44 字符）按字节打包进 2 个 field；**链上负责 bs58 解码为 32 字节公钥**（电路内不做 base58 数学，省约束） |
 | `domain_commitment` | `Poseidon(From 域)`，链上 Registry PDA 直接以它为 seed，结构性实现 d= 与 From 域对齐 |
+| `emailNullifier` | `Poseidon(PoseidonLarge(rsa_signature))`（C9）：对 DKIM RSA 签名做双重 Poseidon，与 zkEmail 生态 email-nullifier 同构；链上 nullifier PDA 的 seed，一封邮件全局 exactly-once（claim 与 sweep 共享），且不可关联（观察者无法从 nullifier 推知邮箱） |
+| `relayerEmailHash` | `Poseidon(To 地址)`（C6'）：链上 claim 与 escrow 登记的 `relayer_email_hash` 比对（RelayerEmailHashMismatch 即拒绝），兑现 relayer 1:1 绑定 |
 
 > v1.5 移除 `escrow_id`（原 C6）与 `nullifier`（原 C9）：不再区分同一(发送方,邮箱)的多笔托管；且去掉 escrow_id 后 nullifier = Poseidon(email) 与 commitment 恒等，失去存在意义。防重放改为 = 账户关闭（同一笔资金不可能被领两次）+ dest 绑定（旧证明"重放"只会付款给同一合法收款人）+ 48h 时间窗。
+>
+> **v1.7 注记**：nullifier 以 `Poseidon(PoseidonLarge(signature))` 恢复——preimage 是 DKIM 签名而非邮箱，与 commitment 无恒等关系，v1.5 的死结已解。防重放 = **nullifier exactly-once**（claim/sweep 共享全局 nullifier PDA，`init` 语义天然拒绝重复，租金 ~0.001 SOL 由 relayer 代付）+ 账户关闭 + dest 绑定；48h 硬编码窗口改为链上 `ProtocolConfig.timestamp_window_past`（默认 30 天、authority 可更新）。语义变化：**一封回复邮件 = 一次领取**，同邮箱多笔 escrow 需多封回复；v1.5 的"跨托管领取"与"一证终身扫新增"同时作废（见 §10）。
 
 ### 7.3 约束清单
 
@@ -334,9 +338,10 @@ DKIM 的 RSA 签名覆盖头部哈希，头部哈希中把 `bh=`（正文哈希�
 | C3 | 跳过 body hash（`bh=` 作为不透明已签文本），见 §6.3 | 配置项 |
 | C4 | `h=` 列表 ⊇ {from, to, subject, date}（结构性强制：未签字段不在被哈希头部内，提取必失败） | — |
 | C5 | `From` 提取（zk-regex：`<addr>` 或裸地址两种格式）→ 小写化 → `Poseidon == commitment` | from 正则电路 |
-| C6 | `To` 存在性匹配：正则断言头部包含 `to:claim@relay.xyz`（无捕获组，意图绑定） | to 正则电路（match-only） |
+| C6'（v1.7 替换 C6） | `To` 提取（ToAddrRegex 捕获 addr-spec）→ `AssertNotUppercase`（原始 To 必须全小写——电路无法改动已签名头）→ `Poseidon == relayerEmailHash` | to_addr 正则电路 |
 | C7 | DKIM `d=` 域 == `From` 域（对齐约束，v1.5 起由 Registry PDA 以 `domain_commitment` 为 seed 结构性实现） | 比较器 / Registry seed |
 | C8 | DKIM `t=` 解析 → `timestamp` 输出 | date 正则电路 |
+| C9（v1.7 恢复） | 邮件 nullifier：`Poseidon(PoseidonLarge(rsa_signature))` == `emailNullifier`（签名 17×121bit limbs 相邻合并为 9 后双重 Poseidon） | email-nullifier 组件（zk-email-verify 同款） |
 | C10 | 每个正则电路独立审计（zk-regex 的 DFA 编译是已知形式化风险点） | 审计要求 |
 | C11 | `Subject` 提取：unfold 后整行严格匹配 `^[1-9A-HJ-NP-Za-km-z]{32,44}$`（拒绝 `Re:` 前缀、encoded-word、多余字符）；地址字节打包为 `dest_a`/`dest_b` 公开输出 | subject 正则电路 |
 
@@ -369,7 +374,11 @@ Vault ATA    owner = Escrow PDA, 存放待领代币
 
 Inbox PDA    seeds = ["inbox", commitment]
   - commitment:  [u8;32]
-  说明：任何人可直接向其 ATA 转币，无需初始化指令（惰性创建）；v1.5 起 sweep 不记 nullifier（见 FR-INB-2）
+  说明：任何人可直接向其 ATA 转币，无需初始化指令（惰性创建）；v1.7 起 sweep 记录邮件 nullifier（见 FR-INB-2）
+
+Nullifier PDA  seeds = ["nullifier", email_nullifier]   // v1.7：零数据标记账户，存在即"该邮件已用过"
+  说明：claim 与 sweep 共享；init 语义天然 exactly-once（重复提交账户已存在即拒绝，
+        NullifierAlreadyUsed / AccountInUse 兜底）；租金 ~0.001 SOL 由 relayer（payer）代付
 
 DkimRegistry PDA  seeds = ["dkim", domain_commitment, selector]
   - pubkey_n_hash: [u8;32]      // Poseidon(n)，与电路输出比对
@@ -382,15 +391,15 @@ DkimRegistry PDA  seeds = ["dkim", domain_commitment, selector]
 | 指令 | 权限 | 逻辑 |
 | --- | --- | --- |
 | `create_escrow(commitment, amount)` | 发送方签名 | 建**不可退款** Escrow + Vault，转入代币；同一 (commitment, sender) 已有 Open 托管时创建失败（PDA 已存在）；v1 不存在任何退款代码路径（v2 候选：恢复双指令，见 §4.4 备注） |
-| `claim(proof, public_inputs)` | 无需 Escrow 相关方签名（Relayer 代付） | ① Groth16 验证（`groth16-solana`，~105k CU）② `commitment == escrow.commitment`、`pubkey_hash` 在 Registry 中 Active ③ `timestamp` 在窗口内 ④ 对 `dest_a/dest_b` 做 bs58 解码得到 dest 公钥（解码失败则拒绝）⑤ Vault → dest 全额转账 ⑥ 关闭 Escrow，租金返还 sender。**dest 完全来自证明公开输出**。同一笔资金不可能被领两次（账户已关闭）；窗口期内该邮箱的有效证明可领取指向该邮箱的任何开放托管，资金必然流向邮箱主人地址（§10"跨托管领取"） |
-| `sweep_inbox(proof, public_inputs, mints[])` | 无需相关方签名（Relayer 代付） | 与 `claim` 相同的证明校验与 dest 解码，将 Inbox 各 mint ATA 余额原子转入 dest；commitment 由 seeds 中的 Inbox PDA 保证 |
+| `claim(proof, public_inputs)` | 无需 Escrow 相关方签名（Relayer 代付） | ① Groth16 验证（`groth16-solana`，~105k CU）② `commitment == escrow.commitment`、`pubkey_hash` 在 Registry 中 Active ③ `timestamp` 在窗口内（`ProtocolConfig.timestamp_window_past`，默认 30 天；未来偏移常量 600s）④ 对 `dest_a/dest_b` 做 bs58 解码得到 dest 公钥（解码失败则拒绝）⑤ Vault → dest 全额转账 ⑥ 关闭 Escrow，租金返还 sender ⑦ init nullifier PDA（已存在即拒绝，`NullifierAlreadyUsed`——一封邮件全局只能领一次）⑧ `pi.relayer_email_hash == escrow.relayer_email_hash`（`RelayerEmailHashMismatch`——proof 不可跨 relayer 重放）。**dest 完全来自证明公开输出**。同一笔资金不可能被领两次（账户已关闭 + nullifier 双保险）；同邮箱多笔托管需逐笔回复领取（§10） |
+| `sweep_inbox(proof, public_inputs, mints[])` | 无需相关方签名（Relayer 代付） | 与 `claim` 相同的证明校验与 dest 解码，将 Inbox 各 mint ATA 余额原子转入 dest；commitment 由 seeds 中的 Inbox PDA 保证；v1.7 起同样 init nullifier PDA 消费邮件 nullifier（与 claim 共享全局 exactly-once） |
 | `registry_upsert(domain, selector, pubkey_n_hash, expires)` | Registry Authority（v1 团队多签） | 新增/轮换公钥 |
 | `registry_revoke(domain, selector)` | Registry Authority | 紧急吊销（密钥泄露/服务商弃用） |
 
 ### 8.3 安全校验要点
 
 - `claim`/`sweep_inbox` 中 `dest` 由电路公开输出经链上 bs58 解码得到，任何链下参与方无法指定或替换（§4.2.1）。
-- 状态机校验（账户存在即 Open，claim 终态关闭）；重放安全性论证见 §10"跨托管领取"与 FR-INB-2。
+- 状态机校验（账户存在即 Open，claim 终态关闭）；重放安全性论证见 §10（邮件 nullifier）与 FR-INB-2。
 - Registry 仅接受 Authority 更新；前端/Relayer 必须读取链上 Registry 而非自备公钥，保证"电路证明所引用的公钥 = 链上注册公钥"。
 - `initialize_registry` 为先到先得（任何首个调用者成为 authority）——公共集群部署时必须与程序部署同一批次完成。
 
@@ -418,9 +427,10 @@ DkimRegistry PDA  seeds = ["dkim", domain_commitment, selector]
 | Relayer 替换收款 EOA 截胡 | Relayer | **不成立**：dest 由电路从 DKIM 签名的 Subject 中提取并作为公开输出，Relayer 篡改 dest 会导致证明验证失败（C11） |
 | 用户绕过 Claim Page 直接回复（标题为 `Re: ...`） | 接收方误操作 | 电路严格匹配（C11）拒绝 → Relayer 自动回信引导使用一键发信按钮；不构成资金风险（无法出证明即无法领取） |
 | 攻击者向系统邮箱发信（标题=自己的地址） | 任何人 | `From` 哈希必须 == commitment（C5）：攻击者的发件邮箱不匹配，证明失败 |
-| 重放：同一封回复邮件对同一笔资金重复领取 | 任何人 | 不成立：claim 即关闭 Escrow 账户，第二次提交账户已不存在，交易被拒绝 |
-| 跨托管领取（v1.5 新语义） | 持有窗口期内有效证明者（含 Relayer） | **可接受**：窗口期（48h）内，该邮箱的任一有效证明可领取指向该邮箱的任何开放托管——但 dest 由证明绑定，资金必然流向邮箱主人自己的地址，无偷窃向量。丧失的仅是"每笔支付需一次新鲜回复"的确认语义；发送方若要该语义，等待 48h 窗口过后再创建托管即可 |
-| 用旧邮件伪造新领取 | 接收方历史邮件泄露 | `t=` 时间窗（48h）：过期邮件的证明被链上拒绝；窗口期内见"跨托管领取"行 |
+| 重放：同一封回复邮件对同一笔资金重复领取 | 任何人 | 不成立：claim 即关闭 Escrow 账户，第二次提交账户已不存在；v1.7 起再加 nullifier exactly-once 双保险（`NullifierAlreadyUsed`） |
+| 一封回复邮件领走同 commitment 的多笔 escrow（v1.5 曾记为"跨托管领取 · 可接受"） | 持有窗口期内有效证明者（含 Relayer） | **不成立**（v1.7 起）：claim 与 sweep 共享全局 nullifier，同一封邮件的证明第二次提交即被链上拒绝，与邮件年龄、时间窗无关。同邮箱多笔托管需逐笔回复、逐笔领取；发送方"每笔支付需一次新鲜回复"的确认语义随之恢复 |
+| 同一封邮件重复 sweep（v1.5 语义下可用旧证明继续扫新增） | 任何人 | **不成立**（v1.7 起）：sweep 与 claim 共享同一 nullifier，重复 sweep 被 `NullifierAlreadyUsed` 拒绝；新增余额需新邮件新证明 |
+| 用历史邮件伪造新领取（领未来创建的 escrow / 未来 sweep inbox） | 接收方历史邮件泄露 | **不成立**（v1.7 起）：nullifier 使旧邮件的证明永远不可用，与年龄无关；`t=` 窗口（`ProtocolConfig.timestamp_window_past`，默认 30 天）退居纵深防御——配合 DKIM Registry revoke 作为签名失效边界 |
 | 正文替换攻击 | 任何人 | 不成立：电路忽略正文，正文不含任何指令（§6.3） |
 | DKIM 私钥泄露/轮换 | 外部 | Registry 支持吊销与多 selector；轮换期间新旧并存 |
 | 邮箱承诺被字典反查 | 链上观察者 | 邮箱空间低熵，无盐哈希可被已知邮箱批量碰撞。**本场景可接受**：发送方本就需知道邮箱（否则无法发送），链上只存哈希是卫生习惯而非强隐私；需要强隐私的场景（如匿名空投）在 commitment 加盐，salt 链下告知接收方，作为配置项 |
@@ -451,7 +461,7 @@ DkimRegistry PDA  seeds = ["dkim", domain_commitment, selector]
 | 接收方无 Solana 钱包 | Claim Page 提供 Passkey 嵌入式钱包创建选项（Face ID 生成地址后复制粘贴到地址输入框）——P1 |
 | 邮件客户端拦截/改写 mailto 参数 | 少数企业客户端剥离 subject 参数 → 用户发出的邮件标题为空 → C11 拒绝 → Relayer 回信引导手动复制地址作为标题（降级路径，此时标题为纯 ASCII 地址，仍可通过电路） |
 | 同一邮箱多笔未领空投（不同发送方） | 各 sender 独立 Escrow PDA，互不影响 |
-| 同一邮箱多笔未领空投（同一发送方） | v1 同时只允许一笔 Open（seeds 不含 nonce）：需等前一笔被领取关闭后再创建；窗口期内该邮箱的有效证明可领取其中任何一笔，资金均流向邮箱主人地址（§10"跨托管领取"） |
+| 同一邮箱多笔未领空投（同一发送方） | v1 同时只允许一笔 Open（seeds 不含 nonce）：需等前一笔被领取关闭后再创建；v1.7 起一封邮件只对应一次领取（nullifier），前一笔领完需再回复一封新邮件才能创建并领取下一笔 |
 
 ---
 
