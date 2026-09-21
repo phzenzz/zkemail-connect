@@ -16,7 +16,8 @@
     "app:dev": "npm --prefix app run dev",
     "app:build": "npm --prefix app run build",
     "app:deploy": "npm --prefix app run deploy",
-    "relayer:run": "npx tsx relayer/index.ts"
+    "relayer:run": "npx tsx relayer/index.ts",
+    "crypto-parity": "cd app && npx tsx scripts/crypto-parity.ts"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",
