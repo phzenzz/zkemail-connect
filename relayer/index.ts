@@ -7,7 +7,7 @@ import path from "path";
 import { runIndexer } from "./indexer";
 import { runInboundFromEnv, InboundDeps, ClaimableMail } from "./inbound";
 import { claimEscrow, ClaimerDeps } from "./claimer";
-import { ConsoleNotifier, Notifier } from "./notify";
+import { ConsoleNotifier, gmailAuthFromEnv, Notifier } from "./notify";
 
 const ROOT = path.resolve(__dirname, "..");
 const IDL_PATH = path.join(ROOT, "onchain/target/idl/email_wallet.json");
@@ -24,11 +24,12 @@ async function main() {
   const program: any = new anchor.Program(idl as any, provider);
   const programId: PublicKey = program.programId as PublicKey;
 
-  // inbound 的引导回复需要真实 notifier(GMAIL_APP_PASSWORD 决定 Gmail SMTP,否则控制台回退)
+  // inbound 的引导回复需要真实 notifier(Gmail OAuth2 或应用专用密码,否则控制台回退)
   let notifier: Notifier = new ConsoleNotifier();
-  if (process.env.GMAIL_APP_PASSWORD) {
+  const gmailAuth = gmailAuthFromEnv(process.env);
+  if (gmailAuth) {
     const { GmailNotifier } = await import("./notify");
-    notifier = new GmailNotifier({ user: process.env.RELAYER_EMAIL!, pass: process.env.GMAIL_APP_PASSWORD });
+    notifier = new GmailNotifier({ user: process.env.RELAYER_EMAIL!, auth: gmailAuth });
   }
 
   // claim 队列:inbound 收到合法回复即入队,逐个兑现(串行,prover 本身串行)

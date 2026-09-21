@@ -7,7 +7,7 @@ import fs from "fs";
 import path from "path";
 import { computeCommitment } from "../circuits/scripts/poseidon";
 import { openEmailCipher, relayerEmailHash } from "./crypto";
-import { ConsoleNotifier, Notifier } from "./notify";
+import { ConsoleNotifier, gmailAuthFromEnv, Notifier } from "./notify";
 
 const ROOT = path.resolve(__dirname, "..");
 const IDL_PATH = path.join(ROOT, "onchain/target/idl/email_wallet.json");
@@ -40,10 +40,11 @@ export async function runIndexer(): Promise<void> {
   if (secret.length !== 32) throw new Error("RELAYER_X25519_SECRET_HEX must be 32 bytes");
   const claimBase = process.env.CLAIM_BASE_URL ?? "http://localhost:3000/claim/";
   let notifier: Notifier = new ConsoleNotifier();
-  if (process.env.GMAIL_APP_PASSWORD) {
+  const gmailAuth = gmailAuthFromEnv(process.env);
+  if (gmailAuth) {
     const { GmailNotifier } = await import("./notify");
-    notifier = new GmailNotifier({ user: email, pass: process.env.GMAIL_APP_PASSWORD });
-    console.log(`[indexer] using GmailNotifier (smtp as ${email})`);
+    notifier = new GmailNotifier({ user: email, auth: gmailAuth });
+    console.log(`[indexer] using GmailNotifier (${gmailAuth.kind} as ${email})`);
   }
 
   const idl = JSON.parse(fs.readFileSync(IDL_PATH, "utf8"));

@@ -18,6 +18,7 @@
     "app:build": "npm --prefix app run build",
     "app:deploy": "npm --prefix app run deploy",
     "relayer:run": "npx tsx relayer/index.ts",
+    "gmail:oauth-setup": "npx tsx relayer/scripts/gmail-oauth-setup.ts",
     "crypto-parity": "cd app && npx tsx scripts/crypto-parity.ts"
   },
   "dependencies": {

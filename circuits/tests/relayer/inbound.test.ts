@@ -1,6 +1,6 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { Connection, Keypair } from "@solana/web3.js";
-import { extractFromAndSubject, findOpenEscrow, runInbound } from "../../../relayer/inbound";
+import { extractFromAndSubject, findOpenEscrow, runInbound, runInboundFromEnv } from "../../../relayer/inbound";
 
 // rpc-websockets 的嵌套依赖 uuid@14 为纯 ESM,jest 默认不转换 node_modules 而解析失败;
 // 运行时 Node 20.19+ 的 require(esm) 正常。本测试只用 Connection/Keypair(不走 websocket),
@@ -9,6 +9,24 @@ jest.mock("rpc-websockets", () => ({
   Client: class {},
   CommonClient: class {},
   WebSocketClient: class {},
+}));
+
+// runInboundFromEnv 的 env 选择测试:顶替 imapflow,记录构造参数(静态 instances 暴露给用例)。
+jest.mock("imapflow", () => ({
+  ImapFlow: class MockImapFlow {
+    static instances: Array<{ opts: any }> = [];
+    opts: any;
+    constructor(opts: any) {
+      this.opts = opts;
+      (this.constructor as typeof MockImapFlow).instances.push(this);
+    }
+    connect = async () => {};
+    getMailboxLock = async () => ({ release: () => {} });
+    fetchOne = async () => undefined;
+    messageFlagsAdd = async () => undefined;
+    search = async () => [];
+    logout = async () => {};
+  },
 }));
 
 describe("extractFromAndSubject", () => {
@@ -74,5 +92,87 @@ describe("runInbound", () => {
     void runInbound(deps, client);
     await new Promise((r) => setImmediate(r)); // 等首轮轮询执行完
     expect(search).toHaveBeenCalledWith({ unseen: true }, { uid: true });
+  });
+});
+
+describe("runInboundFromEnv", () => {
+  const ORIGINAL_ENV = process.env;
+  const ORIGINAL_FETCH = globalThis.fetch;
+  let fetchMock: jest.Mock;
+
+  beforeEach(async () => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.GMAIL_OAUTH_CLIENT_ID;
+    delete process.env.GMAIL_OAUTH_CLIENT_SECRET;
+    delete process.env.GMAIL_OAUTH_REFRESH_TOKEN;
+    delete process.env.GMAIL_APP_PASSWORD;
+    fetchMock = jest.fn<(...args: any[]) => any>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: "access-tok", expires_in: 3600 }),
+    });
+    (globalThis as any).fetch = fetchMock;
+    const { ImapFlow } = await import("imapflow");
+    (ImapFlow as any).instances.length = 0;
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+    (globalThis as any).fetch = ORIGINAL_FETCH;
+  });
+
+  const deps = () => ({
+    connection: {} as unknown as Connection,
+    programId: Keypair.generate().publicKey,
+    notifier: { notify: jest.fn<(...args: any[]) => any>() },
+    onClaimable: jest.fn<(...args: any[]) => any>(),
+    pollMs: 60_000,
+  });
+
+  async function imapInstances() {
+    const { ImapFlow } = await import("imapflow");
+    return (ImapFlow as any).instances as Array<{ opts: any }>;
+  }
+
+  it("constructs ImapFlow with XOAUTH2 access token when oauth2 env present", async () => {
+    process.env.RELAYER_EMAIL = "relayer@gmail.com";
+    process.env.GMAIL_OAUTH_CLIENT_ID = "cid";
+    process.env.GMAIL_OAUTH_CLIENT_SECRET = "csec";
+    process.env.GMAIL_OAUTH_REFRESH_TOKEN = "rt";
+    void runInboundFromEnv(deps());
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe("https://oauth2.googleapis.com/token");
+    expect(init.method).toBe("POST");
+    expect(init.body).toContain("grant_type=refresh_token");
+    expect(init.body).toContain("refresh_token=rt");
+    const instances = await imapInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].opts).toEqual({
+      host: "imap.gmail.com",
+      port: 993,
+      secure: true,
+      logger: false,
+      auth: { user: "relayer@gmail.com", accessToken: "access-tok" },
+    });
+  });
+
+  it("constructs ImapFlow with user/pass when only app password env present", async () => {
+    process.env.RELAYER_EMAIL = "relayer@gmail.com";
+    process.env.GMAIL_APP_PASSWORD = "app-pass";
+    void runInboundFromEnv(deps());
+    await new Promise((r) => setImmediate(r));
+    expect(fetchMock).not.toHaveBeenCalled();
+    const instances = await imapInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].opts.auth).toEqual({ user: "relayer@gmail.com", pass: "app-pass" });
+  });
+
+  it("throws when neither oauth2 nor app password configured", async () => {
+    process.env.RELAYER_EMAIL = "relayer@gmail.com";
+    await expect(runInboundFromEnv(deps())).rejects.toThrow(/required/);
+    expect(await imapInstances()).toHaveLength(0);
   });
 });

@@ -8,7 +8,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { ImapFlow } from "imapflow";
 import bs58 from "bs58"; // @solana/web3.js 已传递依赖;若 import 失败则在根 package.json 显式加 "bs58"
 import { computeCommitment } from "../circuits/scripts/poseidon";
-import { Notifier } from "./notify";
+import { gmailAuthFromEnv, GmailAuth, Notifier } from "./notify";
 
 const DEST = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 export const ESCROW_SIZE = 286;
@@ -125,16 +125,45 @@ export async function runInbound(deps: InboundDeps, client: ImapFlowLike): Promi
   }
 }
 
+/** imapflow 的 XOAUTH2 只接受现成 access token(不支持 refresh token 自动续期),
+ *  故用 refresh token 显式换取 access token(Google OAuth2,grant_type=refresh_token)。 */
+export async function gmailAccessTokenFromRefreshToken(
+  auth: Extract<GmailAuth, { kind: "oauth2" }>
+): Promise<string> {
+  const body = new URLSearchParams({
+    client_id: auth.clientId,
+    client_secret: auth.clientSecret,
+    refresh_token: auth.refreshToken,
+    grant_type: "refresh_token",
+  });
+  const resp = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  const data: any = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data.access_token) {
+    throw new Error(`Gmail OAuth2 access token refresh failed: HTTP ${resp.status} ${JSON.stringify(data)}`);
+  }
+  return data.access_token as string;
+}
+
 /** 生产入口:env 构造 ImapFlow。 */
 export async function runInboundFromEnv(deps: InboundDeps): Promise<void> {
   const user = process.env.RELAYER_EMAIL;
-  const pass = process.env.GMAIL_APP_PASSWORD;
-  if (!user || !pass) throw new Error("RELAYER_EMAIL / GMAIL_APP_PASSWORD required");
+  const auth = gmailAuthFromEnv(process.env);
+  if (!user || !auth) {
+    throw new Error("RELAYER_EMAIL / (GMAIL_OAUTH_REFRESH_TOKEN 或 GMAIL_APP_PASSWORD) required");
+  }
+  const imapAuth =
+    auth.kind === "oauth2"
+      ? { user, accessToken: await gmailAccessTokenFromRefreshToken(auth) }
+      : { user, pass: auth.pass };
   const client = new ImapFlow({
     host: "imap.gmail.com",
     port: 993,
     secure: true,
-    auth: { user, pass },
+    auth: imapAuth,
     logger: false,
   });
   await runInbound(deps, client);
