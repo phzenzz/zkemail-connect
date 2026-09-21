@@ -28,6 +28,19 @@ function indexOfHeader(headers: Buffer, needle: string): number {
   return idx;
 }
 
+/** To 地址的 reveal 起点，锚定 To 头行内搜索：from==to 的自导邮件中地址首次出现
+ *  可能落在 From 头（From 恒在 To 前），全 buffer 首搜会把电路 SelectRegexReveal
+ *  锚到 ToAddrRegex 全零掩码区，witness 阶段才炸。 */
+export function toAddrIndexInHeaders(headers: Buffer, toEmail: string): number {
+  const headerStr = headers.toString("utf8");
+  const toHdrMatch = /(?:^|\r\n)to:[^\r\n]*/.exec(headerStr);
+  if (!toHdrMatch) throw new Error("cannot locate To header line");
+  const toHdrByteOffset = Buffer.byteLength(headerStr.slice(0, toHdrMatch.index + (toHdrMatch[0].startsWith("\r\n") ? 2 : 0)), "utf8");
+  const toAddrIdx = headers.indexOf(toEmail, toHdrByteOffset);
+  if (toAddrIdx < 0) throw new Error("cannot anchor To address within To header");
+  return toAddrIdx;
+}
+
 export async function loadClaimEmail(emlPath: string, relayerField: bigint): Promise<LoadedEmail> {
   const rawEmail = fs.readFileSync(emlPath);
 
@@ -78,7 +91,7 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   // 5. Reveal start indices on the canonicalized header buffer
   const fromIdx = indexOfHeader(headers, fromEmail);
   const subjectIdx = indexOfHeader(headers, destBase58);
-  const toAddrIdx = indexOfHeader(headers, toEmail);
+  const toAddrIdx = toAddrIndexInHeaders(headers, toEmail);
   const tsIdx = indexOfHeader(headers, `t=${timestamp}`) + 2;
   const atPos = fromEmail.indexOf("@");
 
