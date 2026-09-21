@@ -70,3 +70,9 @@ export function protocolConfigPda() {
     program.programId
   )[0];
 }
+export function nullifierPda(emailNullifier: Buffer) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("nullifier"), emailNullifier],
+    program.programId
+  )[0];
+}

@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-pub const NUM_PUBLIC_INPUTS: usize = 7;
+pub const NUM_PUBLIC_INPUTS: usize = 9;
 pub const FR_MODULUS: [u8; 32] = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
     0x28, 0x33, 0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
@@ -15,6 +15,8 @@ pub struct PublicInputs {
     pub dest_a: [u8; 32],
     pub dest_b: [u8; 32],
     pub domain_commitment: [u8; 32],
+    pub email_nullifier: [u8; 32],
+    pub relayer_email_hash: [u8; 32],
 }
 
 pub fn parse_public_inputs(raw: &[[u8; 32]; NUM_PUBLIC_INPUTS]) -> Result<PublicInputs> {
@@ -33,6 +35,8 @@ pub fn parse_public_inputs(raw: &[[u8; 32]; NUM_PUBLIC_INPUTS]) -> Result<Public
         dest_a: raw[4],
         dest_b: raw[5],
         domain_commitment: raw[6],
+        email_nullifier: raw[7],
+        relayer_email_hash: raw[8],
     })
 }
 

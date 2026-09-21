@@ -29,16 +29,18 @@ pub mod email_wallet {
         ctx: Context<InitializeProtocol>,
         treasury: Pubkey,
         fee_lamports: u64,
+        timestamp_window_past: i64,
     ) -> Result<()> {
-        instructions::initialize_protocol(ctx, treasury, fee_lamports)
+        instructions::initialize_protocol(ctx, treasury, fee_lamports, timestamp_window_past)
     }
 
     pub fn update_protocol(
         ctx: Context<UpdateProtocol>,
         treasury: Option<Pubkey>,
         fee_lamports: Option<u64>,
+        timestamp_window_past: Option<i64>,
     ) -> Result<()> {
-        instructions::update_protocol(ctx, treasury, fee_lamports)
+        instructions::update_protocol(ctx, treasury, fee_lamports, timestamp_window_past)
     }
 
     pub fn register_relayer(

@@ -19,6 +19,8 @@ import {
   configPda,
   fundSender,
   fieldToBE,
+  protocolConfigPda,
+  nullifierPda,
 } from "./helpers";
 
 // sweep.eml：与 claim.eml 相同的真实 QQ 邮件（inbox 以 commitment = From 邮箱为键）
@@ -139,6 +141,8 @@ describe("sweep_inbox", () => {
         registry: registry(),
         destOwner: destOwner(),
         payer: payer.publicKey,
+        nullifier: nullifierPda(fieldToBE(fixture.meta.emailNullifier)),
+        protocolConfig: protocolConfigPda(),
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .remainingAccounts([

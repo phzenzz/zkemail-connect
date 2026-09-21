@@ -4,7 +4,7 @@ use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
 use crate::errors::ErrorCode;
 use crate::instructions::claim::{verify_claim_common, ClaimArgs};
-use crate::state::DkimRegistry;
+use crate::state::{DkimRegistry, ProtocolConfig};
 use crate::zk;
 
 #[derive(Accounts)]
@@ -27,6 +27,13 @@ pub struct SweepInbox<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
+    /// CHECK: 零数据标记账户，存在即"该邮件已用过"；重复提交由 init 拒绝。
+    #[account(init, payer = payer, space = 8, seeds = [b"nullifier", args.public_inputs[7].as_ref()], bump)]
+    pub nullifier: UncheckedAccount<'info>,
+
+    #[account(seeds = [b"protocol"], bump = protocol_config.bump)]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -37,12 +44,14 @@ pub fn sweep_inbox<'info>(
     ctx: Context<'_, '_, '_, 'info, SweepInbox<'info>>,
     args: ClaimArgs,
 ) -> Result<()> {
+    require!(ctx.accounts.nullifier.data_is_empty(), ErrorCode::NullifierAlreadyUsed);
     // 1-6. same proof preconditions as claim (registry/timestamp/relayer/dest/groth16)
     let pi = zk::parse_public_inputs(&args.public_inputs)?;
     let dest = verify_claim_common(
         &args,
         &pi,
         &ctx.accounts.registry,
+        &ctx.accounts.protocol_config,
         &ctx.accounts.payer.key(),
         &ctx.accounts.dest_owner.key(),
     )?;

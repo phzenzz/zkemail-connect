@@ -22,6 +22,7 @@ import {
   fieldToBE,
   relayerEntryPda,
   protocolConfigPda,
+  nullifierPda,
 } from "./helpers";
 
 const CLAIM_EML = "../circuits/testdata/emails/claim.eml";
@@ -106,12 +107,12 @@ describe("claim", () => {
     // protocol config 先到先得；其他套件已初始化时以 authority 重置为本套件的 treasury/fee
     try {
       await program.methods
-        .initializeProtocol(treasury.publicKey, new anchor.BN(10_000_000))
+        .initializeProtocol(treasury.publicKey, new anchor.BN(10_000_000), new anchor.BN(2_592_000))
         .accounts({ config: protocolConfigPda(), payer: authority })
         .rpc();
     } catch {
       await program.methods
-        .updateProtocol(treasury.publicKey, new anchor.BN(10_000_000))
+        .updateProtocol(treasury.publicKey, new anchor.BN(10_000_000), new anchor.BN(2_592_000))
         .accounts({ config: protocolConfigPda(), authority })
         .rpc();
     }
@@ -170,6 +171,8 @@ describe("claim", () => {
         destOwner: destOwner(),
         destAta: ata(mint, destOwner()),
         payer: payer.publicKey,
+        nullifier: nullifierPda(fieldToBE(fixture.meta.emailNullifier)),
+        protocolConfig: protocolConfigPda(),
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([payer]);
