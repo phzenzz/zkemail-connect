@@ -4,11 +4,10 @@ use anchor_spl::token::{self, CloseAccount, Mint, Token, TokenAccount, Transfer}
 use groth16_solana::groth16::Groth16Verifier;
 
 use crate::errors::ErrorCode;
-use crate::state::{DkimRegistry, Escrow, RegistryStatus};
+use crate::state::{DkimRegistry, Escrow, ProtocolConfig, RegistryStatus};
 use crate::verifying_key::VERIFYING_KEY;
 use crate::zk::{self, PublicInputs};
 
-pub const TIMESTAMP_WINDOW_PAST: i64 = 48 * 3600; // 48h
 pub const TIMESTAMP_WINDOW_FUTURE: i64 = 600; // 10min clock skew
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -16,7 +15,7 @@ pub struct ClaimArgs {
     pub proof_a: [u8; 64],
     pub proof_b: [u8; 128],
     pub proof_c: [u8; 64],
-    pub public_inputs: [[u8; 32]; 7],
+    pub public_inputs: [[u8; 32]; 9],
     pub selector: String,
 }
 
@@ -62,6 +61,13 @@ pub struct Claim<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
+    /// CHECK: 零数据标记账户，存在即"该邮件已用过"；重复提交由 init 拒绝。
+    #[account(init, payer = payer, space = 8, seeds = [b"nullifier", args.public_inputs[7].as_ref()], bump)]
+    pub nullifier: UncheckedAccount<'info>,
+
+    #[account(seeds = [b"protocol"], bump = protocol_config.bump)]
+    pub protocol_config: Account<'info, ProtocolConfig>,
+
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -79,9 +85,11 @@ pub fn claim(ctx: Context<Claim>, args: ClaimArgs) -> Result<()> {
         &args,
         &pi,
         &ctx.accounts.registry,
+        &ctx.accounts.protocol_config,
         &ctx.accounts.payer.key(),
         &ctx.accounts.dest_owner.key(),
     )?;
+    require!(pi.relayer_email_hash == escrow.relayer_email_hash, ErrorCode::RelayerEmailHashMismatch);
 
     // 7. transfer everything out of the vault, then close it; escrow closed by `close = sender`
     let seeds: &[&[u8]] = &[
@@ -123,6 +131,7 @@ pub fn verify_claim_common(
     args: &ClaimArgs,
     pi: &PublicInputs,
     registry: &DkimRegistry,
+    protocol_config: &ProtocolConfig,
     payer: &Pubkey,
     dest_owner: &Pubkey,
 ) -> Result<Pubkey> {
@@ -136,7 +145,7 @@ pub fn verify_claim_common(
     // timestamp window
     let ts = pi.timestamp as i64;
     require!(
-        ts >= now - TIMESTAMP_WINDOW_PAST && ts <= now + TIMESTAMP_WINDOW_FUTURE,
+        ts >= now - protocol_config.timestamp_window_past && ts <= now + TIMESTAMP_WINDOW_FUTURE,
         ErrorCode::TimestampOutOfWindow
     );
 

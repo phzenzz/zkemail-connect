@@ -6,7 +6,7 @@ import { PublicKey } from "@solana/web3.js";
 import { createMint, createAccount, mintTo, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
   AMOUNT, ata, conn, fieldToBE, loadKeypair, loadProgram, loadState,
-  programId, RELAYER_EMAIL, saveState,
+  programId, relayerEmailFromState, saveState,
 } from "./common";
 import { relayerEmailHash, sealEmailForRelayer } from "../../relayer/crypto";
 
@@ -31,7 +31,8 @@ async function main() {
   const senderAta = await createAccount(conn, sender, mint, sender.publicKey);
   await mintTo(conn, sender, mint, senderAta, sender, MINT_SUPPLY);
 
-  const relayerHash = await relayerEmailHash(RELAYER_EMAIL);
+  const relayerEmail = relayerEmailFromState(state); // = eml 的 To，与 04 步注册值一致
+  const relayerHash = await relayerEmailHash(relayerEmail);
   const relayerEntry = PublicKey.findProgramAddressSync(
     [Buffer.from("relayer"), relayerHash], programId())[0];
   let entry: any;
@@ -47,7 +48,7 @@ async function main() {
   const protocolConfig = PublicKey.findProgramAddressSync([Buffer.from("protocol")], programId())[0];
   const cfg = await program.account.protocolConfig.fetch(protocolConfig); // treasury 以链上 config 为准
   const cipher = sealEmailForRelayer(RECIPIENT_EMAIL, x25519.publicKey);
-  console.log(`[02] email cipher length=${cipher.length} (relayer=${RELAYER_EMAIL})`);
+  console.log(`[02] email cipher length=${cipher.length} (relayer=${relayerEmail})`);
 
   const escrow = PublicKey.findProgramAddressSync(
     [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer()], programId())[0];

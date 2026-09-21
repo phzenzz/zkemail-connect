@@ -67,10 +67,10 @@ describe("create_escrow", () => {
     // protocol config 先到先得；其他套件已初始化时以 authority 重置为本套件的 treasury/fee
     const authority = provider.wallet.publicKey;
     try {
-      await program.methods.initializeProtocol(treasury.publicKey, new anchor.BN(10_000_000))
+      await program.methods.initializeProtocol(treasury.publicKey, new anchor.BN(10_000_000), new anchor.BN(2_592_000))
         .accounts({ config: protocolConfigPda(), payer: authority }).rpc();
     } catch {
-      await program.methods.updateProtocol(treasury.publicKey, new anchor.BN(10_000_000))
+      await program.methods.updateProtocol(treasury.publicKey, new anchor.BN(10_000_000), new anchor.BN(2_592_000))
         .accounts({ config: protocolConfigPda(), authority }).rpc();
     }
     // 注册本套件使用的 relayer（active）

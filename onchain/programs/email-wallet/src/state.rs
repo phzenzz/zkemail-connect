@@ -45,10 +45,11 @@ pub struct ProtocolConfig {
     pub authority: Pubkey,
     pub treasury: Pubkey,
     pub fee_lamports: u64,
+    pub timestamp_window_past: i64,
     pub bump: u8,
 }
 impl ProtocolConfig {
-    pub const SIZE: usize = 8 + 32 + 32 + 8 + 1;
+    pub const SIZE: usize = 8 + 32 + 32 + 8 + 8 + 1;
 }
 
 #[account]

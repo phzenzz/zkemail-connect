@@ -6,14 +6,17 @@
 // 最后出证明并 claim。
 import { spawn, execFileSync, ChildProcess } from "child_process";
 import nacl from "tweetnacl";
-import { sealEmailForRelayer, relayerEmailHash } from "../relayer/crypto";
+import { sealEmailForRelayer } from "../relayer/crypto";
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import {
   Connection, Keypair, PublicKey, ComputeBudgetProgram,
+  AddressLookupTableAccount, AddressLookupTableProgram,
+  Transaction, TransactionMessage, VersionedTransaction, SystemProgram,
 } from "@solana/web3.js";
 import {
   createMint, createAccount, mintTo, getAccount, TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import fs from "fs";
 import path from "path";
@@ -24,7 +27,9 @@ const EML = path.join(ROOT, "circuits/testdata/emails/e2e.eml");
 const PROOF_OUT = path.join(ROOT, "circuits/build/e2e-proof.json");
 const MINT_SUPPLY = 1_000_000_000;
 const AMOUNT = 50_000_000;
-const RELAYER_EMAIL = "relay@zkemail.io";
+// v1.7: relayer 标识不再是硬编码常量——必须等于 eml 的 To 地址：
+// proof 绑定 relayerEmailHash = Poseidon(To)，claim 链上校验与 escrow 登记值一致。
+// 解析邮件后以 email.meta.toEmail / meta.relayerEmailHash 为准（见 main 内）。
 const PROTOCOL_FEE = 1_000_000; // 0.001 SOL
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -62,8 +67,10 @@ async function main() {
   const { relayerToField } = await import("../circuits/scripts/poseidon");
   const email = await loadClaimEmail(EML, relayerToField(relayer.publicKey.toBytes()));
   const { destBase58, selector } = email.meta;
+  const relayerEmail = email.meta.toEmail; // 必须等于 eml 的 To（proof 绑定其 Poseidon 哈希）
+  const relayerHash = fieldToBE(email.meta.relayerEmailHash);
   const commitment = fieldToBE(email.meta.commitment);
-  console.log(`[e2e] email parsed: from=${email.meta.fromEmail} domain=${email.meta.domain} selector=${selector} dest=${destBase58}`);
+  console.log(`[e2e] email parsed: from=${email.meta.fromEmail} domain=${email.meta.domain} selector=${selector} dest=${destBase58} to=${relayerEmail}`);
 
   // 1. build program & start a fresh local validator with the program deployed
   execFileSync("anchor", ["build"], {
@@ -89,23 +96,22 @@ async function main() {
   }
   console.log(`[e2e] validator up with program ${programIdStr}, sender+relayer airdropped`);
 
-  // 1.5 运营侧：初始化 protocol config + 注册 relayer（发件邮箱即标识）
+  // 1.5 运营侧：初始化 protocol config + 注册 relayer（邮箱 = eml 的 To）
   const idl = JSON.parse(fs.readFileSync(path.join(ROOT, "onchain/target/idl/email_wallet.json"), "utf8"));
   const provider = new anchor.AnchorProvider(conn, new anchor.Wallet(relayer), { commitment: "confirmed" });
   const program = new Program(idl, provider) as any;
   const protocolConfig = PublicKey.findProgramAddressSync([Buffer.from("protocol")], programId)[0];
-  const relayerHash = await relayerEmailHash(RELAYER_EMAIL);
   const relayerEntry = PublicKey.findProgramAddressSync(
     [Buffer.from("relayer"), relayerHash], programId)[0];
   try {
-    await program.methods.initializeProtocol(treasury.publicKey, new anchor.BN(PROTOCOL_FEE))
+    await program.methods.initializeProtocol(treasury.publicKey, new anchor.BN(PROTOCOL_FEE), new anchor.BN(2_592_000))
       .accounts({ config: protocolConfig, payer: relayer.publicKey }).rpc();
   } catch { /* already initialized */ }
   await program.methods.registerRelayer(
-      RELAYER_EMAIL, Array.from(relayerHash), Array.from(relayerX25519.publicKey),
+      relayerEmail, Array.from(relayerHash), Array.from(relayerX25519.publicKey),
       relayer.publicKey, new anchor.BN(0))
     .accounts({ relayerEntry, claimAuthority: relayer.publicKey }).rpc();
-  console.log(`[e2e] relayer registered: ${RELAYER_EMAIL} entry=${relayerEntry.toBase58()}`);
+  console.log(`[e2e] relayer registered: ${relayerEmail} entry=${relayerEntry.toBase58()}`);
 
   // 2. sender 侧：创建 SPL mint + 存币建托管（commitment 对应邮件 From 邮箱）
   const mint = await createMint(conn, sender, sender.publicKey, null, 6);
@@ -121,7 +127,7 @@ async function main() {
     cwd: ROOT,
     env: {
       ...process.env,
-      RELAYER_EMAIL,
+      RELAYER_EMAIL: relayerEmail,
       RELAYER_X25519_SECRET_HEX: Buffer.from(relayerX25519.secretKey).toString("hex"),
       RPC_URL: RPC,
     },
@@ -194,19 +200,68 @@ async function main() {
     .accounts({ config, registry, authority: relayer.publicKey }).rpc();
   console.log(`[e2e] dkim registry upserted for ${email.meta.domain} selector=${selector}`);
 
-  // 5. claim：单笔交易 = 验证明 + 解码 dest + 转账 + 关账户
+  // 4.5 v0 地址查找表：claim 交易携带 Groth16 证明（≈550B），legacy 1232B 上限放不下
   const destOwner = new PublicKey(destBase58);
+  const nullifier = PublicKey.findProgramAddressSync(
+    [Buffer.from("nullifier"), fieldToBE(email.meta.emailNullifier)], programId)[0];
+  const recentSlot = await conn.getSlot("finalized");
+  const [createAltIx, altAddress] = AddressLookupTableProgram.createLookupTable({
+    authority: relayer.publicKey, payer: relayer.publicKey, recentSlot,
+  });
+  await provider.sendAndConfirm(new Transaction().add(createAltIx), []);
+  await provider.sendAndConfirm(new Transaction().add(
+    AddressLookupTableProgram.extendLookupTable({
+      payer: relayer.publicKey, authority: relayer.publicKey, lookupTable: altAddress,
+      addresses: [
+        programId, SystemProgram.programId, TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID, mint, escrow, ata(mint, escrow),
+        sender.publicKey, registry, destOwner, ata(mint, destOwner),
+        nullifier, protocolConfig,
+      ],
+    })
+  ), []);
+  // 运行时不允许在同一 slot 引用刚扩展过的表（last_extended_slot 必须 < tx slot）
+  const extendedSlot = await conn.getSlot();
+  for (let i = 0; i < 20 && (await conn.getSlot()) <= extendedSlot; i++) await sleep(400);
+  let altAccount: AddressLookupTableAccount | null = null;
+  for (let i = 0; i < 10; i++) {
+    const res = await conn.getAddressLookupTable(altAddress);
+    if (res.value && res.value.state.addresses.length === 13) { altAccount = res.value; break; }
+    await sleep(400);
+  }
+  if (!altAccount) throw new Error("address lookup table not ready");
+  console.log(`[e2e] ALT ready: ${altAddress.toBase58()} (13 addresses)`);
+
+  // 5. claim：单笔交易 = 验证明 + 解码 dest + 转账 + 关账户
   const claimStart = Date.now();
-  const sig = await program.methods.claim({
+  const claimTx = await program.methods.claim({
     proofA: fixture.proofA, proofB: fixture.proofB, proofC: fixture.proofC,
     publicInputs: fixture.publicInputs, selector,
   })
     .accounts({
       escrow, sender: sender.publicKey, vault: ata(mint, escrow), mint,
       registry, destOwner, destAta: ata(mint, destOwner), payer: relayer.publicKey,
+      nullifier,
+      protocolConfig,
       tokenProgram: TOKEN_PROGRAM_ID })
     .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
-    .signers([relayer]).rpc();
+    .transaction();
+  // 不传 maxRetries：验证器刚启动时节点转发可能前几次失败，交由节点重试至 blockhash 过期
+  let sig = "";
+  for (let attempt = 0; attempt < 3 && !sig; attempt++) {
+    const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash();
+    const claimMsg = new TransactionMessage({
+      payerKey: relayer.publicKey, recentBlockhash: blockhash,
+      instructions: claimTx.instructions,
+    }).compileToV0Message([altAccount]);
+    const vtx = new VersionedTransaction(claimMsg);
+    vtx.sign([relayer]);
+    try {
+      sig = await conn.sendRawTransaction(vtx.serialize());
+      await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+    } catch { sig = ""; }
+  }
+  if (!sig) throw new Error("claim tx failed to land after 3 attempts");
   console.log(`[e2e] claim tx: ${sig} (${Date.now() - claimStart}ms)`);
 
   // 6. 断言终态

@@ -2,19 +2,20 @@ import fs from "fs";
 import path from "path";
 
 /**
- * Relay system mailbox — the single source of truth for the address the claim
- * circuit binds into its To-presence DFA (ToPresenceRegex), the loader's To
- * guard, and the test-email export instructions (testdata/emails/README.md).
+ * Relay system mailbox — the single source of truth for the relay address the
+ * loader's To guard checks against (load-email.ts) and the test-email export
+ * instructions (testdata/emails/README.md). Since v1.6 (to_addr static spec)
+ * the address is NOT compiled into the circuit DFA: the circuit binds the
+ * To addr-spec hash (relayerEmailHash public input), and the address binding
+ * is enforced on-chain against the escrow's relayer_email_hash. Changing it
+ * therefore does NOT require a circuit rebuild — the full trusted-setup
+ * pipeline (scripts/rebuild.sh) only needs to rerun when the circuit itself
+ * or a checked-in regex spec changes.
  *
  * Production default: "claim@relay.xyz" (a dedicated relay-domain mailbox; see
  * testdata/emails/README.md and the PRD). The value checked into
  * relay.config.json is the CURRENT test value (the maintainer's Gmail) so a
  * real Gmail can be sent directly To the relay address during tests.
- *
- * The address is compiled into the circuit DFA: after changing it you must
- * rerun the full pipeline (scripts/rebuild.sh): gen-regexes → compile →
- * groth16 setup → contribute → verify → export vk → gen-vk-rust → copy
- * verifying_key.rs into the onchain program.
  *
  * Resolution order: RELAY_ADDRESS env var (override for CI/tests) →
  * circuits/relay.config.json.

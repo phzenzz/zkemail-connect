@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Compiles src/claim.circom → build/claim.{r1cs,wasm,sym} and prints r1cs info.
 #
-# NOTE: the relay address (circuits/relay.config.json / RELAY_ADDRESS) is compiled
-# into the ToPresenceRegex DFA. After changing it, do NOT run this script alone —
-# run `bash circuits/scripts/rebuild.sh` (full chain: gen-regexes → compile →
+# NOTE (v1.6): to_addr_regex.circom is a static artifact (regex-specs/to_addr.json,
+# checked in) — the relay address is NOT compiled into any DFA anymore. This script
+# alone suffices for witness/unit tests; proof-key changes require the full
+# `bash circuits/scripts/rebuild.sh` chain (to_addr spec existence check → compile →
 # groth16 setup → contribute → zkey verify → export vk → gen-vk-rust → copy
 # verifying_key.rs), documented step-by-step in rebuild.sh's header.
 set -euo pipefail

@@ -5,6 +5,7 @@ use crate::events::{RelayerRegistered, RelayerUpdated};
 use crate::state::{ProtocolConfig, RelayerEntry, MAX_EMAIL_LEN};
 
 #[derive(Accounts)]
+#[instruction(treasury: Pubkey, fee_lamports: u64, timestamp_window_past: i64)]
 pub struct InitializeProtocol<'info> {
     #[account(init, payer = payer, space = ProtocolConfig::SIZE, seeds = [b"protocol"], bump)]
     pub config: Account<'info, ProtocolConfig>,
@@ -17,16 +18,19 @@ pub fn initialize_protocol(
     ctx: Context<InitializeProtocol>,
     treasury: Pubkey,
     fee_lamports: u64,
+    timestamp_window_past: i64,
 ) -> Result<()> {
     let config = &mut ctx.accounts.config;
     config.authority = ctx.accounts.payer.key();
     config.treasury = treasury;
     config.fee_lamports = fee_lamports;
+    config.timestamp_window_past = timestamp_window_past;
     config.bump = ctx.bumps.config;
     Ok(())
 }
 
 #[derive(Accounts)]
+#[instruction(treasury: Option<Pubkey>, fee_lamports: Option<u64>, timestamp_window_past: Option<i64>)]
 pub struct UpdateProtocol<'info> {
     #[account(mut, seeds = [b"protocol"], bump = config.bump, has_one = authority @ ErrorCode::Unauthorized)]
     pub config: Account<'info, ProtocolConfig>,
@@ -37,12 +41,16 @@ pub fn update_protocol(
     ctx: Context<UpdateProtocol>,
     treasury: Option<Pubkey>,
     fee_lamports: Option<u64>,
+    timestamp_window_past: Option<i64>,
 ) -> Result<()> {
     if let Some(treasury) = treasury {
         ctx.accounts.config.treasury = treasury;
     }
     if let Some(fee) = fee_lamports {
         ctx.accounts.config.fee_lamports = fee;
+    }
+    if let Some(window) = timestamp_window_past {
+        ctx.accounts.config.timestamp_window_past = window;
     }
     Ok(())
 }

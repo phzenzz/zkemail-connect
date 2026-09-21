@@ -36,4 +36,8 @@ pub enum ErrorCode {
     InvalidCipherSize,
     #[msg("relayer not active")]
     RelayerNotActive,
+    #[msg("email nullifier already used")]
+    NullifierAlreadyUsed,
+    #[msg("relayer email hash does not match escrow")]
+    RelayerEmailHashMismatch,
 }
