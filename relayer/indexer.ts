@@ -116,3 +116,8 @@ export async function runIndexer(): Promise<void> {
   console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
 }
 
+// 独立运行入口(e2e.ts 以 `npx tsx relayer/indexer.ts` 方式拉起;被 index.ts import 时不触发)
+if (require.main === module) {
+  runIndexer().catch((e) => { console.error("[indexer] FAIL:", e?.message ?? e); process.exit(1); });
+}
+
