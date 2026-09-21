@@ -74,7 +74,6 @@ pub struct Claim<'info> {
 }
 
 pub fn claim(ctx: Context<Claim>, args: ClaimArgs) -> Result<()> {
-    require!(ctx.accounts.nullifier.data_is_empty(), ErrorCode::NullifierAlreadyUsed);
     let escrow = &ctx.accounts.escrow;
 
     // 1. parse public inputs + bind commitment to the escrow being claimed

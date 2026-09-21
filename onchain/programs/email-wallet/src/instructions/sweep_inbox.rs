@@ -44,7 +44,6 @@ pub fn sweep_inbox<'info>(
     ctx: Context<'_, '_, '_, 'info, SweepInbox<'info>>,
     args: ClaimArgs,
 ) -> Result<()> {
-    require!(ctx.accounts.nullifier.data_is_empty(), ErrorCode::NullifierAlreadyUsed);
     // 1-6. same proof preconditions as claim (registry/timestamp/relayer/dest/groth16)
     let pi = zk::parse_public_inputs(&args.public_inputs)?;
     let dest = verify_claim_common(
