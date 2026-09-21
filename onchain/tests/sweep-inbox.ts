@@ -6,9 +6,10 @@ import {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-import { ComputeBudgetProgram, Keypair, PublicKey, Transaction } from "@solana/web3.js";
-import { assert } from "chai";
+import { ComputeBudgetProgram, Keypair, PublicKey, SystemProgram, Transaction, AddressLookupTableAccount } from "@solana/web3.js";
+import { assert, expect } from "chai";
 import { execFileSync } from "child_process";
 import fs from "fs";
 import {
@@ -21,13 +22,19 @@ import {
   fieldToBE,
   protocolConfigPda,
   nullifierPda,
+  createAltAccount,
+  sendV0Tx,
 } from "./helpers";
 
-// sweep.eml：与 claim.eml 相同的真实 QQ 邮件（inbox 以 commitment = From 邮箱为键）
+// sweep.eml：与 claim.eml / e2e.eml 相同的真实 QQ 邮件（inbox 以 commitment = From 邮箱为键）。
+// v1.7 起三份替身共享同一 emailNullifier（exactly-once）：claim 套件花掉 nullifier 后，
+// 本套件首笔 sweep 会因 nullifier 已存在被拒——因此各套件必须分 validator 生命周期单独跑
+// （pkill + --reset 后按组跑，见 .superpowers/sdd/2026-09-21-email-nullifier/task-5-report.md）。
 const SWEEP_EML = "../circuits/testdata/emails/sweep.eml";
 const FIXTURE_PATH = "../circuits/build/sweep-proof.json";
 const FIRST_DEPOSIT = 777_000;
 const SECOND_DEPOSIT = 55_000;
+const THIRD_DEPOSIT = 66_000; // 仅 "fresh email" 正向用例（it.skip）使用
 
 describe("sweep_inbox", () => {
   const funder = Keypair.generate();
@@ -36,6 +43,7 @@ describe("sweep_inbox", () => {
   let fixture: any;
   let commitment: Buffer;
   let inbox: PublicKey;
+  let altAccount: AddressLookupTableAccount; // sweep 交易经 v0 + ALT 发送（legacy 1232B 放不下 Groth16 证明）
   const selector = () => fixture.meta.selector as string; // 真实 DKIM selector
   const destOwner = () => new PublicKey(fixture.meta.destBase58 as string);
   const registry = () =>
@@ -103,6 +111,21 @@ describe("sweep_inbox", () => {
       .accounts({ config: configPda(), registry: registry(), authority })
       .rpc();
 
+    // sweep 与 claim 共享 verify_claim_common：时间窗校验读 protocol config，
+    // 本套件独立跑（validator --reset）时必须自初始化。
+    const treasury = Keypair.generate();
+    try {
+      await program.methods
+        .initializeProtocol(treasury.publicKey, new anchor.BN(10_000_000), new anchor.BN(2_592_000))
+        .accounts({ config: protocolConfigPda(), payer: authority })
+        .rpc();
+    } catch {
+      await program.methods
+        .updateProtocol(treasury.publicKey, new anchor.BN(10_000_000), new anchor.BN(2_592_000))
+        .accounts({ config: protocolConfigPda(), authority })
+        .rpc();
+    }
+
     // 任何人直接给 inbox 的 ATA 打币（无需任何链上初始化）。
     // inbox 是 PDA（off-curve），必须显式 allowOwnerOffCurve：
     const inboxAta = getAssociatedTokenAddressSync(mint, inbox, true);
@@ -123,12 +146,29 @@ describe("sweep_inbox", () => {
       funder,
       FIRST_DEPOSIT
     );
+
+    // v0 地址查找表：静态账户列表压缩后 sweep 交易才进得了 1232B 上限
+    altAccount = await createAltAccount([
+      program.programId,
+      SystemProgram.programId,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+      mint,
+      inbox,
+      registry(),
+      destOwner(),
+      inboxAta,
+      getAssociatedTokenAddressSync(mint, destOwner()),
+      nullifierPda(fieldToBE(fixture.meta.emailNullifier)),
+      protocolConfigPda(),
+    ]);
   });
 
-  const sweepTx = () => {
+  // 返回 sweep 指令集（含 CU limit preInstruction），由调用方经 sendV0Tx + ALT 发送
+  const sweepIxs = async () => {
     const inboxAta = getAssociatedTokenAddressSync(mint, inbox, true);
     const destAta = getAssociatedTokenAddressSync(mint, destOwner());
-    return program.methods
+    const tx = await program.methods
       .sweepInbox({
         proofA: fixture.proofA,
         proofB: fixture.proofB,
@@ -150,14 +190,18 @@ describe("sweep_inbox", () => {
         { pubkey: inboxAta, isSigner: false, isWritable: true },
         { pubkey: destAta, isSigner: false, isWritable: true },
       ])
-      .signers([payer])
       .preInstructions([
         ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
-      ]);
+      ])
+      .transaction();
+    return tx.instructions;
   };
 
+  const sweepV0 = async () =>
+    sendV0Tx(await sweepIxs(), [payer], [altAccount], payer.publicKey);
+
   it("sweeps inbox balance to proof-bound dest", async () => {
-    const sig = await sweepTx().rpc();
+    const sig = await sweepV0();
 
     const destAta = await getAccount(
       provider.connection,
@@ -174,9 +218,9 @@ describe("sweep_inbox", () => {
     console.log(`sweep tx ${sig} consumed ${await cuOf(sig)} CU`);
   });
 
-  it("v1.5: re-sweeping with the same proof succeeds and sweeps new deposits", async () => {
-    // 再次给 inbox 打币，用同一份 proof 重复 sweep：
-    // v1.5 语义下重放无害——资金始终只去 proof 绑定的 dest。
+  it("rejects re-sweeping with the same proof (nullifier spent)", async () => {
+    // v1.7 exactly-once：同一份 proof 的第二次 sweep 必须被 nullifier init 拒绝。
+    // 与 v1.5 "重放无害"语义相反——资金始终只去 proof 绑定的 dest，重放不再允许。
     await mintTo(
       provider.connection,
       funder,
@@ -185,22 +229,81 @@ describe("sweep_inbox", () => {
       funder,
       SECOND_DEPOSIT
     );
-    const sig = await sweepTx().rpc();
+    await expect(sweepV0()).to.be.rejectedWith(
+      /already in use|NullifierAlreadyUsed|custom program error: 0x0/i
+    );
 
-    const destAta = await getAccount(
-      provider.connection,
-      getAssociatedTokenAddressSync(mint, destOwner())
-    );
-    assert.equal(
-      destAta.amount.toString(),
-      (FIRST_DEPOSIT + SECOND_DEPOSIT).toString()
-    );
+    // nullifier 拒的是链上账户创建，资金未动：inbox 仍持有新打的 SECOND_DEPOSIT
     const inboxAta = await getAccount(
       provider.connection,
       getAssociatedTokenAddressSync(mint, inbox, true)
     );
-    assert.equal(inboxAta.amount.toString(), "0");
+    assert.equal(inboxAta.amount.toString(), SECOND_DEPOSIT.toString());
+  });
 
-    console.log(`re-sweep tx ${sig} consumed ${await cuOf(sig)} CU`);
+  it.skip("sweeps new deposits with a fresh email (needs an independent second .eml)", async () => {
+    // 正向用例：用户导出独立的第二封邮件 sweep2.eml（同 From、不同 DKIM 签名 →
+    // 不同 emailNullifier）后启用：对其出证明并 sweep，断言
+    // dest = FIRST_DEPOSIT + SECOND_DEPOSIT + THIRD_DEPOSIT、inbox 归零。
+    // 跳过原因：当前 sweep.eml 是 e2e.eml 的替身（用户指令不导出新邮件），
+    // 不存在第二封独立邮件，nullifier 必然碰撞。
+    const FRESH_EML = "../circuits/testdata/emails/sweep2.eml";
+    execFileSync(
+      "npx",
+      ["tsx", "../circuits/scripts/prove-for.ts", FRESH_EML, payer.publicKey.toBase58(), "build/sweep2-proof.json"],
+      {
+        cwd: "../circuits",
+        stdio: "inherit",
+        env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=16384" },
+      }
+    );
+    const fresh = JSON.parse(
+      fs.readFileSync("../circuits/build/sweep2-proof.json", "utf8")
+    );
+    await mintTo(
+      provider.connection,
+      funder,
+      mint,
+      getAssociatedTokenAddressSync(mint, inbox, true),
+      funder,
+      THIRD_DEPOSIT
+    );
+    const inboxAta = getAssociatedTokenAddressSync(mint, inbox, true);
+    const destAta = getAssociatedTokenAddressSync(mint, destOwner());
+    const freshTx = await program.methods
+      .sweepInbox({
+        proofA: fresh.proofA,
+        proofB: fresh.proofB,
+        proofC: fresh.proofC,
+        publicInputs: fresh.publicInputs,
+        selector: selector(),
+      } as any)
+      .accounts({
+        inbox,
+        registry: registry(),
+        destOwner: destOwner(),
+        payer: payer.publicKey,
+        nullifier: nullifierPda(fieldToBE(fresh.meta.emailNullifier)),
+        protocolConfig: protocolConfigPda(),
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .remainingAccounts([
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: inboxAta, isSigner: false, isWritable: true },
+        { pubkey: destAta, isSigner: false, isWritable: true },
+      ])
+      .preInstructions([
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+      ])
+      .transaction();
+    await sendV0Tx(freshTx.instructions, [payer], [altAccount], payer.publicKey);
+
+    const dest = await getAccount(provider.connection, destAta);
+    assert.equal(
+      dest.amount.toString(),
+      (FIRST_DEPOSIT + SECOND_DEPOSIT + THIRD_DEPOSIT).toString()
+    );
+    const inboxAfter = await getAccount(provider.connection, inboxAta);
+    assert.equal(inboxAfter.amount.toString(), "0");
   });
 });

@@ -14,8 +14,20 @@ export const STATE_FILE = path.join(STATE_DIR, "state.json");
 export const PROOF_FILE = path.join(STATE_DIR, "proof.json");
 
 export const AMOUNT = 50_000_000; // 50 个代币（6 位小数）
-export const RELAYER_EMAIL = "relay@zkemail.io";
 export const PROTOCOL_FEE = 1_000_000; // 0.001 SOL
+
+/**
+ * relayer 邮箱（relayer 标识）= eml 的 To 地址，01 步解析邮件时写入 state.meta.toEmail。
+ * v1.7 起 proof 绑定 relayerEmailHash = Poseidon(To)，claim 链上校验它与 escrow 登记值一致，
+ * 因此注册 relayer（04）与 seal（02）必须用同一个值——直接从 state 读，不允许硬编码。
+ */
+export function relayerEmailFromState(state: State): string {
+  const to = state.meta?.toEmail;
+  if (typeof to !== "string" || !to) {
+    throw new Error("state.meta.toEmail 缺失——先跑 01 步解析邮件（relayer 邮箱 = eml 的 To 地址）");
+  }
+  return to;
+}
 
 export const conn = new Connection(RPC, "confirmed");
 

@@ -18,6 +18,11 @@ async function main() {
   const registry = PublicKey.findProgramAddressSync(
     [Buffer.from("dkim"), fieldToBE(fixture.meta.domainCommitment), Buffer.from(fixture.selector)],
     programId())[0];
+  const nullifier = PublicKey.findProgramAddressSync(
+    [Buffer.from("nullifier"), fieldToBE(fixture.meta.emailNullifier)],
+    programId())[0];
+  const protocolConfig = PublicKey.findProgramAddressSync(
+    [Buffer.from("protocol")], programId())[0];
 
   const sig = await program.methods.claim({
     proofA: fixture.proofA, proofB: fixture.proofB, proofC: fixture.proofC,
@@ -26,6 +31,7 @@ async function main() {
     .accounts({
       escrow, sender: sender.publicKey, vault: ata(mint, escrow), mint,
       registry, destOwner, destAta: ata(mint, destOwner), payer: relayer.publicKey,
+      nullifier, protocolConfig,
       tokenProgram: TOKEN_PROGRAM_ID })
     .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
     .signers([relayer]).rpc();
