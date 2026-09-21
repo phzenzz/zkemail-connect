@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import SendPage from "./pages/SendPage";
+import ClaimPage from "./pages/ClaimPage";
 import "./App.css";
 
 export default function App() {
@@ -9,7 +10,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/send" replace />} />
           <Route path="/send" element={<SendPage />} />
-          <Route path="/claim/:escrow" element={<div data-testid="claim-page">Claim page placeholder</div>} />
+          <Route path="/claim/:escrow" element={<ClaimPage />} />
         </Routes>
       </div>
     </BrowserRouter>
