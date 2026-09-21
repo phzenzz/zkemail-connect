@@ -1,5 +1,6 @@
 // relayer 入站:IMAP 轮询 Gmail 收件箱 → 解析回复邮件 → 定位开放托管 → 交给 claimer。
-// 已处理判定:成功处理加 \Seen(Gmail 不再返回于 UNSEEN 查询);失败保持 UNSEEN 下轮重试。
+// 已处理判定:handleOne 成功返回(claimed 或 ignored,含已发引导回信)即加 \Seen;
+// handleOne 抛错保持 UNSEEN 下轮重试。启动水位线跳过首轮历史未读,避免首启刷屏。
 // 重启无内存状态时,链上 nullifier 拒绝重复 claim(幂等兜底)。
 import fs from "fs";
 import os from "os";
@@ -99,18 +100,25 @@ export async function runInbound(deps: InboundDeps, client: ImapFlowLike): Promi
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zkemail-inbound-"));
   await client.connect();
   console.log("[inbound] imap connected");
+  let watermark: number | null = null; // 启动水位线:首轮跳过 uid <= watermark 的历史邮件
   for (;;) {
     try {
       const lock = await client.getMailboxLock("INBOX");
       try {
-        const uids = (await client.search({ unseen: true }, { uid: true })) || [];
+        if (watermark === null) {
+          const all = (await client.search({ all: true }, { uid: true })) || [];
+          watermark = all.reduce((m, u) => Math.max(m, u), 0);
+          console.log(`[inbound] startup watermark uid=${watermark}`);
+        }
+        const uids = ((await client.search({ unseen: true }, { uid: true })) || [])
+          .filter((u) => u > watermark!);
         for (const uid of uids) {
           const msg = await client.fetchOne(String(uid), { source: true }, { uid: true });
           if (!msg?.source) continue;
-          const result = await handleOne(deps, uid, Buffer.from(msg.source), tmpDir);
-          if (result === "claimed") {
-            await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true });
-          }
+          // 处理成功(claimed 或 ignored,含已发引导回信)即加 \Seen,避免每轮重试;
+          // handleOne 抛错则不标记,保持 UNSEEN 下轮重试。
+          await handleOne(deps, uid, Buffer.from(msg.source), tmpDir);
+          await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true });
         }
       } finally {
         lock.release();

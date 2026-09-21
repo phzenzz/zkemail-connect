@@ -93,6 +93,72 @@ describe("runInbound", () => {
     await new Promise((r) => setImmediate(r)); // 等首轮轮询执行完
     expect(search).toHaveBeenCalledWith({ unseen: true }, { uid: true });
   });
+
+  const waitFor = async (cond: () => boolean, ms = 3000) => {
+    const t0 = Date.now();
+    while (!cond()) {
+      if (Date.now() - t0 > ms) throw new Error("waitFor timeout");
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+
+  it("marks \\Seen even when the mail is ignored (guidance reply must not retry)", async () => {
+    const eml = Buffer.from("From: a@b.com\r\nSubject: not-a-base58-address\r\n\r\n");
+    const search = jest.fn<(...args: any[]) => any>()
+      .mockImplementation((q: any) => Promise.resolve(q?.all ? [] : [3]));
+    const fetchOne = jest.fn<(...args: any[]) => any>().mockResolvedValue({ source: eml });
+    const messageFlagsAdd = jest.fn<(...args: any[]) => any>();
+    const notifier = { notify: jest.fn<(...args: any[]) => any>() };
+    const client = {
+      connect: jest.fn<(...args: any[]) => any>().mockResolvedValue(undefined),
+      getMailboxLock: jest.fn<(...args: any[]) => any>().mockResolvedValue({ release: jest.fn() }),
+      fetchOne,
+      messageFlagsAdd,
+      search,
+      logout: jest.fn<(...args: any[]) => any>(),
+    };
+    const deps = {
+      connection: {} as unknown as Connection,
+      programId: Keypair.generate().publicKey,
+      notifier,
+      onClaimable: jest.fn<(...args: any[]) => any>(),
+      pollMs: 60_000,
+    };
+    void runInbound(deps, client);
+    await waitFor(() => messageFlagsAdd.mock.calls.length > 0);
+    expect(notifier.notify).toHaveBeenCalledTimes(1); // 引导回信已发
+    expect(messageFlagsAdd).toHaveBeenCalledWith("3", ["\\Seen"], { uid: true }); // 不再重试
+  });
+
+  it("startup watermark: first poll skips historical UNSEEN uids <= watermark", async () => {
+    const eml = Buffer.from("From: a@b.com\r\nSubject: not-a-base58-address\r\n\r\n");
+    let unseenPolls = 0;
+    const search = jest.fn<(...args: any[]) => any>().mockImplementation((q: any) => {
+      if (q?.all) return Promise.resolve([500]);
+      unseenPolls += 1;
+      return Promise.resolve(unseenPolls === 1 ? [499, 500, 501, 502] : []);
+    });
+    const fetchOne = jest.fn<(...args: any[]) => any>().mockResolvedValue({ source: eml });
+    const messageFlagsAdd = jest.fn<(...args: any[]) => any>();
+    const client = {
+      connect: jest.fn<(...args: any[]) => any>().mockResolvedValue(undefined),
+      getMailboxLock: jest.fn<(...args: any[]) => any>().mockResolvedValue({ release: jest.fn() }),
+      fetchOne,
+      messageFlagsAdd,
+      search,
+      logout: jest.fn<(...args: any[]) => any>(),
+    };
+    const deps = {
+      connection: {} as unknown as Connection,
+      programId: Keypair.generate().publicKey,
+      notifier: { notify: jest.fn<(...args: any[]) => any>() },
+      onClaimable: jest.fn<(...args: any[]) => any>(),
+      pollMs: 60_000,
+    };
+    void runInbound(deps, client);
+    await waitFor(() => messageFlagsAdd.mock.calls.length >= 2);
+    expect(fetchOne.mock.calls.map((c) => c[0])).toEqual(["501", "502"]);
+  });
 });
 
 describe("runInboundFromEnv", () => {
