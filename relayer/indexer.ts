@@ -32,14 +32,19 @@ function fieldToBE(v: bigint): Buffer {
   return b;
 }
 
-async function main() {
+export async function runIndexer(): Promise<void> {
   const email = process.env.RELAYER_EMAIL;
   const secretHex = process.env.RELAYER_X25519_SECRET_HEX;
   if (!email || !secretHex) throw new Error("RELAYER_EMAIL / RELAYER_X25519_SECRET_HEX required");
   const secret = Buffer.from(secretHex, "hex");
   if (secret.length !== 32) throw new Error("RELAYER_X25519_SECRET_HEX must be 32 bytes");
   const claimBase = process.env.CLAIM_BASE_URL ?? "http://localhost:3000/claim/";
-  const notifier: Notifier = new ConsoleNotifier();
+  let notifier: Notifier = new ConsoleNotifier();
+  if (process.env.GMAIL_APP_PASSWORD) {
+    const { GmailNotifier } = await import("./notify");
+    notifier = new GmailNotifier({ user: email, pass: process.env.GMAIL_APP_PASSWORD });
+    console.log(`[indexer] using GmailNotifier (smtp as ${email})`);
+  }
 
   const idl = JSON.parse(fs.readFileSync(IDL_PATH, "utf8"));
   const conn = new Connection(process.env.RPC_URL ?? "http://127.0.0.1:8899", "confirmed");
@@ -111,4 +116,3 @@ async function main() {
   console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
 }
 
-main().catch((e) => { console.error("[indexer] FAIL:", e?.message ?? e); process.exit(1); });
