@@ -1,7 +1,7 @@
 // 校验 app/src/lib/zkCrypto.ts 与 circuits/scripts/poseidon.ts 输出一致(防实现漂移)。
 import { computeCommitment as refCommitment } from "../../circuits/scripts/poseidon";
 import { sealEmailForRelayer as refSeal, relayerEmailHash } from "../../relayer/crypto";
-import { computeCommitment, sealEmailForRelayer, fieldToBE32 } from "../src/lib/zkCrypto";
+import { computeCommitment, sealEmailForRelayer, fieldToBE32 } from "../src/react-app/lib/zkCrypto";
 import nacl from "tweetnacl";
 
 async function main() {
