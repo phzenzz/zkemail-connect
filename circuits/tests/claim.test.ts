@@ -27,28 +27,6 @@ beforeAll(async () => {
     O: 2,
   });
   good = await loadClaimEmail(EML, 42n);
-
-  // Task 1 过渡期：电路新增 3 个 witness 输入（toAddrIdx / emailNullifier / relayerEmailHash），
-  // load-email.ts 到 Task 4 才扩展——在此从已加载输入自行推导（与电路/链下同源），保证
-  // calculateWitness 输入完备；Task 4 将删除此段、改为 loadClaimEmail 直出。
-  const { computeCommitment, poseidonHash } = await import("../scripts/poseidon");
-  const emailHeader: string[] = (good.inputs as any).emailHeader;
-  const headerLen = Number((good.inputs as any).emailHeaderLength);
-  const headerStr = Buffer.from(emailHeader.slice(0, headerLen).map((x) => Number(x))).toString();
-  const toEmail = headerStr
-    .match(/(?:^|\r\n)to:[^\r\n]*?<?([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})>?/i)![1]
-    .toLowerCase();
-  const toAddrIdx = headerStr.indexOf(toEmail); // SelectRegexReveal 起点 = 地址在 canonicalized headers 中的偏移
-  const sig: string[] = (good.inputs as any).signature; // 十进制 limb 数组
-  const merged: bigint[] = [];
-  for (let i = 0; i < 9; i++) merged.push(BigInt(sig[2 * i]) + (BigInt(sig[2 * i + 1] ?? "0") << 121n));
-  const sigHash = await poseidonHash(merged);
-  good.inputs = {
-    ...good.inputs,
-    toAddrIdx: String(toAddrIdx),
-    emailNullifier: (await poseidonHash([sigHash])).toString(),
-    relayerEmailHash: (await computeCommitment(toEmail)).toString(),
-  };
 });
 
 test("valid claim email satisfies constraints and public signals", async () => {

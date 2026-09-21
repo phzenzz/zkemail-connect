@@ -2,9 +2,8 @@ import fs from "fs";
 import { verifyDKIMSignature } from "@zk-email/helpers/dist/dkim";
 import { generateEmailVerifierInputsFromDKIMResult } from "@zk-email/helpers";
 import {
-  computeCommitment, computeDomainCommitment, computePubkeyHash,
+  computeCommitment, computeDomainCommitment, computePubkeyHash, poseidonHash,
 } from "./poseidon";
-import { getRelayAddress, relayAddressRegexEscaped } from "./relay-config";
 
 export const MAX_HEADER_LEN = 1024;
 export const MAX_DEST_LEN = 44;
@@ -15,9 +14,10 @@ export interface LoadedEmail {
   inputs: Record<string, unknown>;
   meta: {
     fromEmail: string; domain: string; selector: string;
-    destBase58: string; timestamp: number;
+    destBase58: string; timestamp: number; toEmail: string;
     commitment: string;
     pubkeyHash: string; domainCommitment: string; destA: string; destB: string;
+    emailNullifier: string; relayerEmailHash: string;
   };
 }
 
@@ -43,15 +43,12 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   const fromEmail = fromMatch[1].toLowerCase();
   const fromDomain = fromEmail.split("@")[1];
 
-  // v1.5.1: To must be exactly the configured relay address (relay.config.json /
-  // RELAY_ADDRESS), match-only presence check in-circuit; same exact-lowercase
-  // pattern as ToPresenceRegex — no /i: the circuit DFA is case-sensitive, so
-  // reject any case/extra-char mismatch here with a clear error.
-  const relayAddress = getRelayAddress();
-  const toGuard = new RegExp(`(?:^|\\r\\n)to:${relayAddressRegexEscaped()}(?:\\r\\n)`);
-  if (!toGuard.test(headerStr)) {
-    throw new Error(`To is not ${relayAddress} (exact, case-sensitive — see relay.config.json)`);
-  }
+  // To 解析（v1.7）：电路对 To 做地址提取 + 小写断言，链下须保证原始 To 地址即小写
+  const toMatch = headerStr.match(/(?:^|\r\n)to:[^\r\n]*?<?([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})>?/);
+  if (!toMatch) throw new Error("cannot parse To address");
+  const toEmail = toMatch[1];
+  const rawTo = headerStr.match(/(?:^|\r\n)to:([^\r\n]*)/)![1];
+  if (rawTo !== rawTo.toLowerCase()) throw new Error("To address must be lowercase in raw headers (circuit cannot modify signed headers)");
 
   const subjectMatch = headerStr.match(/(?:^|\r\n)subject:([1-9A-HJ-NP-Za-km-z]{32,44})(?=\r\n)/);
   if (!subjectMatch) {
@@ -69,7 +66,7 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   }
   const age = Math.floor(Date.now() / 1000) - timestamp;
   if (age > FRESHNESS_SECS) {
-    throw new Error(`.eml is ${Math.round(age / 3600)}h old (>48h window) — re-export a fresh email (see testdata/emails/README.md)`);
+    throw new Error(`.eml is ${Math.round(age / 3600)}h old (>${Math.round(FRESHNESS_SECS / 3600)}h window) — re-export a fresh email (see testdata/emails/README.md)`);
   }
 
   // 4. Base circuit inputs (header-only)
@@ -81,6 +78,7 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   // 5. Reveal start indices on the canonicalized header buffer
   const fromIdx = indexOfHeader(headers, fromEmail);
   const subjectIdx = indexOfHeader(headers, destBase58);
+  const toAddrIdx = indexOfHeader(headers, toEmail);
   const tsIdx = indexOfHeader(headers, `t=${timestamp}`) + 2;
   const atPos = fromEmail.indexOf("@");
 
@@ -88,6 +86,11 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
   const commitment = await computeCommitment(fromEmail);
   const domainCommitment = await computeDomainCommitment(fromDomain);
   const pubkeyHash = await computePubkeyHash(dkimResult.publicKey);
+  const relayerEmailHash = await computeCommitment(toEmail); // 复用，341 填充与电路一致
+  const sig = (baseInputs as any).signature.map((s: string) => BigInt(s));
+  const merged: bigint[] = [];
+  for (let i = 0; i < 9; i++) merged.push(sig[2 * i] + ((sig[2 * i + 1] ?? 0n) << 121n));
+  const emailNullifier = await poseidonHash([await poseidonHash(merged)]); // C9 同构（Poseidon(1)([sigHash])），inputs 组装前算好
 
   const destBytes = new TextEncoder().encode(destBase58);
   const chunkLE = (b: Uint8Array) => {
@@ -102,6 +105,7 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
     ...baseInputs,
     fromAddrIdx: String(fromIdx),
     subjectAddrIdx: String(subjectIdx),
+    toAddrIdx: String(toAddrIdx),
     timestampIdx: String(tsIdx),
     domainIdx: String(atPos + 1),
     pubkeyHash: pubkeyHash.toString(),
@@ -111,16 +115,20 @@ export async function loadClaimEmail(emlPath: string, relayerField: bigint): Pro
     destA: destA.toString(),
     destB: destB.toString(),
     domainCommitment: domainCommitment.toString(),
+    emailNullifier: emailNullifier.toString(),
+    relayerEmailHash: relayerEmailHash.toString(),
   };
 
   return {
     rawEmail, inputs,
     meta: {
       fromEmail, domain: fromDomain, selector: dkimResult.selector,
-      destBase58, timestamp,
+      destBase58, timestamp, toEmail,
       commitment: commitment.toString(), pubkeyHash: pubkeyHash.toString(),
       domainCommitment: domainCommitment.toString(),
       destA: destA.toString(), destB: destB.toString(),
+      emailNullifier: emailNullifier.toString(),
+      relayerEmailHash: relayerEmailHash.toString(),
     },
   };
 }
