@@ -1,0 +1,138 @@
+// relayer 入站:IMAP 轮询 Gmail 收件箱 → 解析回复邮件 → 定位开放托管 → 交给 claimer。
+// 已处理判定:成功处理加 \Seen(Gmail 不再返回于 UNSEEN 查询);失败保持 UNSEEN 下轮重试。
+// 重启无内存状态时,链上 nullifier 拒绝重复 claim(幂等兜底)。
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { ImapFlow } from "imapflow";
+import bs58 from "bs58"; // @solana/web3.js 已传递依赖;若 import 失败则在根 package.json 显式加 "bs58"
+import { computeCommitment } from "../circuits/scripts/poseidon";
+import { Notifier } from "./notify";
+
+const DEST = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+export const ESCROW_SIZE = 286;
+export const COMMITMENT_OFFSET = 8;
+
+export interface ClaimableMail {
+  emlPath: string;
+  fromEmail: string;
+  dest: string;
+  escrow: PublicKey;
+}
+
+export interface InboundDeps {
+  connection: Connection;
+  programId: PublicKey;
+  notifier: Notifier;
+  onClaimable: (m: ClaimableMail) => Promise<void>;
+  pollMs?: number;
+}
+
+/** 解析裸 .eml 的 From(addr-spec)与 Subject(含折叠展开、大小写归一)。 */
+export function extractFromAndSubject(raw: Buffer): { fromEmail: string; subject: string } | null {
+  const headerEnd = raw.indexOf("\r\n\r\n");
+  const header = (headerEnd === -1 ? raw.toString("utf8") : raw.subarray(0, headerEnd).toString("utf8"));
+  const unfolded = header.replace(/\r\n[ \t]+/g, " ");
+  const fromMatch = unfolded.match(/^from:\s*(.+)$/im);
+  const subjectMatch = unfolded.match(/^subject:\s*(.*)$/im);
+  if (!fromMatch || !subjectMatch) return null;
+  const addr = fromMatch[1].match(/<([^>]+)>/)?.[1] ?? fromMatch[1].trim();
+  const email = addr.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return { fromEmail: email, subject: subjectMatch[1].trim() };
+}
+
+/** 按 commitment 找开放托管:dataSize=286 + memcmp(offset 8)。同一邮箱多笔时取第一个(最早)。 */
+export async function findOpenEscrow(
+  connection: Connection, programId: PublicKey, commitment32: Uint8Array
+): Promise<PublicKey | null> {
+  const accounts = await connection.getProgramAccounts(programId, {
+    filters: [
+      { dataSize: ESCROW_SIZE },
+      { memcmp: { offset: COMMITMENT_OFFSET, bytes: bs58.encode(commitment32) } },
+    ],
+  });
+  return accounts.length > 0 ? accounts[0].pubkey : null;
+}
+
+export interface ImapFlowLike {
+  connect(): Promise<void>;
+  getMailboxLock(path: string): Promise<{ release(): void }>;
+  fetchOne(range: string, query: object, opts?: object): Promise<any>;
+  messageFlagsAdd(range: string, flags: string[], opts?: object): Promise<any>;
+  search(query: object): Promise<false | number[]>;
+  logout(): Promise<void>;
+}
+
+async function handleOne(
+  deps: InboundDeps, uid: number, raw: Buffer, tmpDir: string
+): Promise<"claimed" | "ignored"> {
+  const parsed = extractFromAndSubject(raw);
+  if (!parsed) return "ignored";
+  const subject = parsed.subject;
+  if (!DEST.test(subject)) {
+    console.log(`[inbound] uid=${uid} subject not a base58 address, sending guidance`);
+    await deps.notifier.notify(parsed.fromEmail, {
+      escrow: "", sender: "", amount: "",
+      claimUrl: process.env.CLAIM_BASE_URL ?? "http://localhost:5173/claim/",
+    });
+    return "ignored";
+  }
+  const commitment = await computeCommitment(parsed.fromEmail);
+  const c32 = new Uint8Array(32);
+  let v = commitment;
+  for (let i = 31; i >= 0; i--) { c32[i] = Number(v & 0xffn); v >>= 8n; }
+  const escrow = await findOpenEscrow(deps.connection, deps.programId, c32);
+  if (!escrow) {
+    console.log(`[inbound] uid=${uid} no open escrow for ${parsed.fromEmail}`);
+    return "ignored";
+  }
+  const emlPath = path.join(tmpDir, `inbound-${uid}.eml`);
+  fs.writeFileSync(emlPath, raw);
+  await deps.onClaimable({ emlPath, fromEmail: parsed.fromEmail, dest: subject, escrow });
+  return "claimed";
+}
+
+/** 长驻轮询(单测不直接调用本函数;抽 handleOne/findOpenEscrow 已覆盖核心逻辑)。 */
+export async function runInbound(deps: InboundDeps, client: ImapFlowLike): Promise<void> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zkemail-inbound-"));
+  await client.connect();
+  console.log("[inbound] imap connected");
+  for (;;) {
+    try {
+      const lock = await client.getMailboxLock("INBOX");
+      try {
+        const uids = (await client.search({ unseen: true })) || [];
+        for (const uid of uids) {
+          const msg = await client.fetchOne(String(uid), { source: true }, { uid: true });
+          if (!msg?.source) continue;
+          const result = await handleOne(deps, uid, Buffer.from(msg.source), tmpDir);
+          if (result === "claimed") {
+            await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true });
+          }
+        }
+      } finally {
+        lock.release();
+      }
+    } catch (e) {
+      console.error("[inbound] poll error:", (e as Error)?.message ?? e);
+    }
+    await new Promise((r) => setTimeout(r, deps.pollMs ?? 30_000));
+  }
+}
+
+/** 生产入口:env 构造 ImapFlow。 */
+export async function runInboundFromEnv(deps: InboundDeps): Promise<void> {
+  const user = process.env.RELAYER_EMAIL;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) throw new Error("RELAYER_EMAIL / GMAIL_APP_PASSWORD required");
+  const client = new ImapFlow({
+    host: "imap.gmail.com",
+    port: 993,
+    secure: true,
+    auth: { user, pass },
+    logger: false,
+  });
+  await runInbound(deps, client);
+}
