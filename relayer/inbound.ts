@@ -73,7 +73,7 @@ async function handleOne(
   if (!parsed) return "ignored";
   const subject = parsed.subject;
   if (!DEST.test(subject)) {
-    console.log(`[inbound] uid=${uid} subject not a base58 address, sending guidance`);
+    console.log(`[inbound] subjec=${subject} uid=${uid} subject not a base58 address, sending guidance`);
     await deps.notifier.notify(parsed.fromEmail, {
       escrow: "", sender: "", amount: "",
       claimUrl: process.env.CLAIM_BASE_URL ?? "http://localhost:5173/claim/",
@@ -105,6 +105,8 @@ export async function runInbound(deps: InboundDeps, client: ImapFlowLike): Promi
     try {
       const lock = await client.getMailboxLock("INBOX");
       try {
+        console.log(`[inbound] loop start`);
+        
         if (watermark === null) {
           const all = (await client.search({ all: true }, { uid: true })) || [];
           watermark = all.reduce((m, u) => Math.max(m, u), 0);
@@ -114,6 +116,8 @@ export async function runInbound(deps: InboundDeps, client: ImapFlowLike): Promi
           .filter((u) => u > watermark!);
         for (const uid of uids) {
           const msg = await client.fetchOne(String(uid), { source: true }, { uid: true });
+          console.log(`[inbound] imap msg=${msg}`);
+
           if (!msg?.source) continue;
           // 处理成功(claimed 或 ignored,含已发引导回信)即加 \Seen,避免每轮重试;
           // handleOne 抛错则不标记,保持 UNSEEN 下轮重试。

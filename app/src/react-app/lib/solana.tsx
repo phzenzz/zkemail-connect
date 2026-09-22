@@ -1,14 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { PublicKey } from "@solana/web3.js";
 import { AnchorProvider, Program } from "@coral-xyz/anchor";
-import { ConnectionProvider, WalletProvider, useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { ConnectionProvider, WalletProvider, useConnection, useAnchorWallet } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter, SolflareWalletAdapter } from "@solana/wallet-adapter-wallets";
 import idl from "./idl/email_wallet.json";
-
-// anchor 依赖 Buffer(浏览器无内置)
-import { Buffer } from "buffer";
-if (!(globalThis as any).Buffer) (globalThis as any).Buffer = Buffer;
 
 export type AppConfig = {
   programId: PublicKey;
@@ -59,11 +55,12 @@ export function SolanaProviders({ children }: { children: ReactNode }) {
 export function useEmailWalletProgram(): Program | null {
   const config = useAppConfig();
   const { connection } = useConnection();
-  const wallet = useWallet();
+  const anchorWallet = useAnchorWallet();
   return useMemo(() => {
     if (!config) return null;
-    const signer = wallet.wallet?.adapter ?? ({} as never);
+    // 未连钱包时用只读占位；连上后用 useAnchorWallet 才能正确签名 .rpc()
+    const signer = anchorWallet ?? ({ publicKey: null } as never);
     const provider = new AnchorProvider(connection, signer as any, { commitment: "confirmed" });
     return new Program(idl as any, provider);
-  }, [config, connection, wallet.wallet]);
+  }, [config, connection, anchorWallet]);
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { WalletMultiButton, useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { BN } from "@coral-xyz/anchor";
 import { useAppConfig, useEmailWalletProgram } from "@/lib/solana";
 import { computeCommitment, fieldToBE32, sealEmailForRelayer } from "@/lib/zkCrypto";
@@ -17,6 +17,7 @@ export default function SendPage() {
   const config = useAppConfig();
   const program = useEmailWalletProgram();
   const { publicKey } = useWallet();
+  const { setVisible: setWalletModalVisible } = useWalletModal();
   const { connection } = useConnection();
   const [email, setEmail] = useState("");
   const [mintIdx, setMintIdx] = useState(0);
@@ -48,11 +49,20 @@ export default function SendPage() {
   const mint = config.mints[mintIdx] ?? config.mints[0];
 
   const submit = async () => {
-    if (!publicKey || !mint) return;
+    if (!mint) {
+      setError("no mint configured");
+      return;
+    }
+    if (!publicKey) {
+      setWalletModalVisible(true);
+      return;
+    }
     setBusy(true); setError(null); setDone(null);
     try {
       const trimmed = email.trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) throw new Error("invalid email");
+      const amountNum = parseFloat(amount);
+      if (!Number.isFinite(amountNum) || amountNum <= 0) throw new Error("invalid amount");
       const commitment = await computeCommitment(trimmed);
       const commitmentBytes = fieldToBE32(commitment);
       const cipher = sealEmailForRelayer(trimmed, config.relayX25519Pk);
@@ -69,13 +79,20 @@ export default function SendPage() {
       const protocol = await (program.account as any).protocolConfig.fetchNullable(protocolPda);
       if (!protocol) throw new Error("protocol not initialized on this cluster");
       const mintPk = new PublicKey(mint.mint);
-      const vault = getAssociatedTokenAddressSync(mintPk, escrowPda);
+      // escrow PDA 在曲线外，vault ATA 必须 allowOwnerOffCurve
+      const vault = getAssociatedTokenAddressSync(mintPk, escrowPda, true);
       const senderAta = getAssociatedTokenAddressSync(mintPk, publicKey);
       const decimals = mint.decimals;
-      const raw = BigInt(Math.round(parseFloat(amount) * 10 ** decimals));
+      const raw = BigInt(Math.round(amountNum * 10 ** decimals));
       if (raw <= 0n) throw new Error("invalid amount");
       const sig = await (program.methods as any)
-        .createEscrow(Array.from(commitmentBytes), new BN(raw.toString()), Array.from(cipher), Array.from(relayerEmailHash))
+        .createEscrow(
+          Array.from(commitmentBytes),
+          new BN(raw.toString()),
+          // Anchor `bytes` 在浏览器里必须是 Buffer；Array.from 会触发 Blob.encode 报错
+          Buffer.from(cipher),
+          Array.from(relayerEmailHash),
+        )
         .accounts({
           escrow: escrowPda,
           vault,
@@ -95,7 +112,14 @@ export default function SendPage() {
       await connection.confirmTransaction(sig, "confirmed");
       await refreshMine();
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      const msg =
+        e?.message ||
+        e?.error?.errorMessage ||
+        e?.name ||
+        (typeof e === "string" ? e : null) ||
+        String(e);
+      setError(msg);
+      console.error("createEscrow failed", e);
     } finally {
       setBusy(false);
     }
@@ -129,8 +153,8 @@ export default function SendPage() {
             <Label htmlFor="amount">Amount</Label>
             <Input id="amount" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="10" />
           </div>
-          <Button className="w-full" disabled={!publicKey || busy || !mint} onClick={submit}>
-            {busy ? "Sending…" : publicKey ? "Send (irreversible)" : "Connect wallet first"}
+          <Button className="w-full" disabled={busy || !mint} onClick={() => void submit()}>
+            {busy ? "Sending…" : publicKey ? "Send (irreversible)" : "Connect wallet to send"}
           </Button>
           {error && <p className="text-sm text-destructive">{error}</p>}
           {done && (
