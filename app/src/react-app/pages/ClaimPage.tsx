@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
-import { useParams } from "react-router-dom";
+import { useParams } from "@tanstack/react-router";
 import { useAppConfig, useEmailWalletProgram } from "@/lib/solana";
 import { DEST_RE } from "@/lib/zkCrypto";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ type EscrowState =
   | { kind: "claimed" };
 
 export default function ClaimPage() {
-  const { escrow } = useParams();
+  const { escrow } = useParams({ strict: false });
   const config = useAppConfig();
   const program = useEmailWalletProgram();
   const [state, setState] = useState<EscrowState>({ kind: "loading" });

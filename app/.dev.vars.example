@@ -1,0 +1,11 @@
+# 复制为 .dev.vars 后由本地 dev 读取（该文件已被 gitignore，不要提交）。
+#
+# 1) 想立刻跑通 /app 后台（无需 Google 凭证、无需 KV namespace）：
+#    只保留下面这行即可。
+AUTH_DEV_BYPASS=1
+
+# 2) 想在本机联调真实 Google 登录：
+#    注释掉 AUTH_DEV_BYPASS，填入 Google Cloud Console 的 OAuth 2.0 客户端凭证。
+#    注意：Authorized redirect URI 必须登记 http://localhost:5173/api/auth/google/callback
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=

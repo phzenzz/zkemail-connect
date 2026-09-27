@@ -89,8 +89,10 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     margin: 0;
-    display: flex;
-    place-items: center;
+    /* 原先还有 display:flex / place-items:center —— Vite 模板给 demo 页做垂直居中用的。
+       它会把 #root 从撑满宽度的块级盒变成按内容收缩的 flex item，
+       导致 mx-auto / justify-center 全都在一个错误宽度的盒子里生效（整站内容偏左）。
+       AppShell 与营销页都要求 #root 撑满视口，故移除。 */
     min-width: 320px;
     min-height: 100vh;
   }

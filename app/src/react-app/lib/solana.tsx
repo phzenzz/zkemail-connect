@@ -18,8 +18,11 @@ export type AppConfig = {
 const AppConfigContext = createContext<AppConfig | null>(null);
 export const useAppConfig = () => useContext(AppConfigContext);
 
+const REQUIRED_CONFIG_FIELDS = ["programId", "rpcUrl", "relayEmail", "relayX25519Pk", "claimBaseUrl"] as const;
+
 export function SolanaProviders({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<AppConfig | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const wallets = useMemo(
     () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
     []
@@ -27,7 +30,13 @@ export function SolanaProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetch("/api/config")
       .then((r) => r.json())
-      .then((j) =>
+      .then((j) => {
+        // 先显式校验：若让 PublicKey(undefined) 自己抛，异常会被下面的 catch 吞掉，
+        // 表现为永久 "loading config…"，看不出真正原因。
+        const missing = REQUIRED_CONFIG_FIELDS.filter((k) => !j[k]);
+        if (missing.length > 0) {
+          throw new Error(`/api/config 缺少 ${missing.join(", ")} —— 检查 Worker 的 vars / app/.dev.vars`);
+        }
         setConfig({
           programId: new PublicKey(j.programId),
           rpcUrl: j.rpcUrl,
@@ -35,10 +44,20 @@ export function SolanaProviders({ children }: { children: ReactNode }) {
           relayX25519Pk: new Uint8Array(j.relayX25519Pk.match(/.{2}/g).map((h: string) => parseInt(h, 16))),
           claimBaseUrl: j.claimBaseUrl,
           mints: j.mints ?? [],
-        })
-      )
-      .catch((e) => console.error("config fetch failed", e));
+        });
+      })
+      .catch((e) => {
+        console.error("config fetch failed", e);
+        setError(e?.message ?? String(e));
+      });
   }, []);
+  if (error) {
+    return (
+      <div className="container mx-auto max-w-xl px-4 py-8">
+        <p className="text-sm text-destructive">Failed to load app config: {error}</p>
+      </div>
+    );
+  }
   if (!config) return <div className="p-8 text-center text-muted-foreground">loading config…</div>;
   return (
     <AppConfigContext.Provider value={config}>

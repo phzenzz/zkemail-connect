@@ -1,11 +1,8 @@
 @import "@solana/wallet-adapter-react-ui/styles.css";
 
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
+/* 说明：原先 #root 上有 max-width:1280px / margin:auto / padding:2rem / text-align:center，
+   那是 Vite 模板给 demo 页用的，会锁死 AppShell 的整幅宽度（PRD 要求后台内容区不限宽）。
+   页面组件（SendPage / ClaimPage）自身带 container + max-w-xl 居中，不依赖这里。 */
 
 .logo {
   height: 6em;

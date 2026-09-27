@@ -1,13 +1,8 @@
 import { Hono } from "hono";
+import { auth } from "./auth";
+import type { Env } from "./env";
 
-export type Env = {
-  PROGRAM_ID: string;
-  RPC_URL: string;
-  RELAYER_EMAIL: string;
-  RELAYER_X25519_PK_HEX: string;
-  CLAIM_BASE_URL: string;
-  MINTS_JSON: string; // [{mint,symbol,decimals}]
-};
+export type { Env };
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -30,5 +25,11 @@ app.get("/api/config", (c) => {
     mints,
   });
 });
+
+// /api/me、/api/auth/*
+app.route("/api", auth);
+
+// 旧路由真 301；客户端路由表里另有一层 <Navigate> 兜底（见 App.tsx）
+app.get("/send", (c) => c.redirect("/app/send-claim", 301));
 
 export default app;
