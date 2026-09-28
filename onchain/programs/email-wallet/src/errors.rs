@@ -40,4 +40,28 @@ pub enum ErrorCode {
     NullifierAlreadyUsed,
     #[msg("relayer email hash does not match escrow")]
     RelayerEmailHashMismatch,
+    #[msg("batch cipher must be non-empty and at most 64000 bytes")]
+    InvalidBatchCipher,
+    #[msg("leaf_count must be between 1 and 65536")]
+    BatchTooManyLeaves,
+    #[msg("expire_at must be at least 3600s in the future")]
+    BatchInvalidExpiry,
+    #[msg("batch not sealed")]
+    BatchNotSealed,
+    #[msg("batch already sealed")]
+    BatchAlreadySealed,
+    #[msg("cipher exceeds cipher_len_expected")]
+    BatchCipherOverflow,
+    #[msg("batch expired")]
+    BatchExpired,
+    #[msg("batch not yet expirable")]
+    BatchNotExpired,
+    #[msg("merkle path does not match root")]
+    BatchInvalidProof,
+    #[msg("leaf index out of range")]
+    BatchLeafOutOfRange,
+    #[msg("leaf already claimed")]
+    BatchLeafAlreadyClaimed,
+    #[msg("merkle path too deep")]
+    BatchTreeTooDeep,
 }
