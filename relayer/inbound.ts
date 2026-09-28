@@ -9,6 +9,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { ImapFlow } from "imapflow";
 import bs58 from "bs58"; // @solana/web3.js 已传递依赖;若 import 失败则在根 package.json 显式加 "bs58"
 import { computeCommitment } from "../circuits/scripts/poseidon";
+import { findLeafByCommitment } from "./batch-store";
 import { gmailAuthFromEnv, GmailAuth, Notifier } from "./notify";
 
 const DEST = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -19,7 +20,9 @@ export interface ClaimableMail {
   emlPath: string;
   fromEmail: string;
   dest: string;
-  escrow: PublicKey;
+  escrow: PublicKey;            // 单发路径用
+  batch?: PublicKey;            // 批次路径用（二选一）
+  leafIndex?: number;
 }
 
 export interface InboundDeps {
@@ -84,13 +87,23 @@ async function handleOne(
   const c32 = new Uint8Array(32);
   let v = commitment;
   for (let i = 31; i >= 0; i--) { c32[i] = Number(v & 0xffn); v >>= 8n; }
-  const escrow = await findOpenEscrow(deps.connection, deps.programId, c32);
-  if (!escrow) {
-    console.log(`[inbound] uid=${uid} no open escrow for ${parsed.fromEmail}`);
-    return "ignored";
-  }
+  // 批次优先：缓存命中即批次领取；否则回退单发 escrow 扫描
+  const hit = await findLeafByCommitment(Buffer.from(c32));
   const emlPath = path.join(tmpDir, `inbound-${uid}.eml`);
   fs.writeFileSync(emlPath, raw);
+  if (hit) {
+    await deps.onClaimable({
+      emlPath, fromEmail: parsed.fromEmail, dest: subject,
+      escrow: new PublicKey(hit.cache.batch), // 占位：pump 按 batch 字段分流
+      batch: new PublicKey(hit.cache.batch), leafIndex: hit.leafIndex,
+    });
+    return "claimed";
+  }
+  const escrow = await findOpenEscrow(deps.connection, deps.programId, c32);
+  if (!escrow) {
+    console.log(`[inbound] uid=${uid} no open escrow or batch for ${parsed.fromEmail}`);
+    return "ignored";
+  }
   await deps.onClaimable({ emlPath, fromEmail: parsed.fromEmail, dest: subject, escrow });
   return "claimed";
 }

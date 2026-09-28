@@ -6,7 +6,9 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import fs from "fs";
 import path from "path";
 import { computeCommitment } from "../circuits/scripts/poseidon";
-import { openEmailCipher, relayerEmailHash } from "./crypto";
+import { buildBatchTree } from "../circuits/scripts/merkle";
+import { openBytes, openEmailCipher, relayerEmailHash } from "./crypto";
+import { saveCache } from "./batch-store";
 import { ConsoleNotifier, gmailAuthFromEnv, Notifier } from "./notify";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -80,6 +82,64 @@ export async function runIndexer(): Promise<void> {
     });
   }
 
+  // —— 批量空投：BatchCreated/BatchSealed → 解密列表 → 重算 root 比对 → 落缓存 → 逐邮箱通知 ——
+  async function processBatch(batchAddr: PublicKey): Promise<void> {
+    const acc = await program.account.batch.fetchNullable(batchAddr);
+    if (!acc) return;
+    if (Buffer.from(acc.relayerEmailHash).compare(ownHash) !== 0) return;
+    const opened = openBytes(Buffer.from(acc.recipientsCipher), secret);
+    if (!opened) {
+      console.error(`[indexer] batch ${batchAddr.toBase58()}: decrypt failed, drop`);
+      return;
+    }
+    let emails: string[];
+    try {
+      emails = JSON.parse(opened.toString("utf8"));
+      if (!Array.isArray(emails) || emails.some((e) => typeof e !== "string")) throw new Error("bad shape");
+    } catch {
+      console.error(`[indexer] batch ${batchAddr.toBase58()}: bad email list, drop`);
+      return;
+    }
+    const commitments: Buffer[] = [];
+    for (const e of emails) commitments.push(fieldToBE(await computeCommitment(e)));
+    const tree = buildBatchTree(commitments);
+    if (tree.root.compare(Buffer.from(acc.merkleRoot)) !== 0) {
+      console.error(`[indexer] batch ${batchAddr.toBase58()}: root mismatch, drop`);
+      return;
+    }
+    saveCache({ batch: batchAddr.toBase58(), root: tree.root.toString("hex"), emails });
+    for (const recipient of emails) {
+      await notifier.notify(recipient, {
+        escrow: batchAddr.toBase58(),
+        sender: (acc.sender as PublicKey).toBase58(),
+        amount: acc.amountPerRecipient.toString(),
+        claimUrl: claimBase + batchAddr.toBase58(),
+      });
+    }
+    console.log(`[indexer] batch ${batchAddr.toBase58()}: ${emails.length} recipient(s) notified`);
+  }
+
+  program.addEventListener("batchCreated", async (e: any) => {
+    try {
+      // 事件触发时 append/seal 可能尚未完成；只处理已 seal 的，seal 完成由 batchSealed 事件兜住
+      const info = await conn.getAccountInfo(new PublicKey(e.batch));
+      if (!info || info.data[172] !== 1) return; // Batch.sealed @ 字节偏移 172
+      await processBatch(e.batch);
+    } catch (err) {
+      console.error(`[indexer] batch handler error:`, err);
+    }
+  });
+
+  // create 与 seal 是两条交易：BatchCreated 到达时几乎必然未 seal，
+  // 运行期 seal 的批次靠本事件处理（否则要等到重启回填才会通知）。
+  program.addEventListener("batchSealed", async (e: any) => {
+    try {
+      await processBatch(e.batch);
+    } catch (err) {
+      console.error(`[indexer] batchSealed handler error:`, err);
+    }
+  });
+
   // 前向订阅（addEventListener 同步返回，底层 websocket 就绪无信号——就绪语义由下方回填保证）。
   program.addEventListener("escrowCreated", async (e: any) => {
     try {
@@ -113,6 +173,17 @@ export async function runIndexer(): Promise<void> {
     backfilled++;
   }
   console.log(`[indexer] backfilled ${backfilled} escrow(s)`);
+
+  // 批次回填：sealed @ 172（memcmp）。账户大小 = 182 + ceil(leaf_count/8) + cipher_len_expected，
+  // 真实 seal 后 ≥ 258B 且随批次变长，dataSize 精确匹配不可用；非 Batch 账户由
+  // fetchNullable 的 discriminator 校验跳过。
+  const batchAccounts = await conn.getProgramAccounts(programId, {
+    filters: [
+      { memcmp: { offset: 172, bytes: anchor.utils.bytes.bs58.encode(Buffer.from([1])) } },
+    ],
+  });
+  for (const { pubkey } of batchAccounts) await processBatch(pubkey);
+  console.log(`[indexer] backfilled ${batchAccounts.length} batch(es)`);
 
   console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
 }

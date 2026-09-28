@@ -9,6 +9,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { loadClaimEmail } from "../circuits/scripts/load-email";
 import { convertProofForSolana } from "../circuits/scripts/convert-proof";
 import { relayerToField, computeDomainCommitment } from "../circuits/scripts/poseidon";
+import { batchPath } from "./batch-store";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -168,5 +169,98 @@ export async function claimEscrow(
   }
   if (!sig) throw new Error("claim tx failed to land after 3 attempts");
   console.log(`[claimer] claimed ${mail.escrow.toBase58()} → ${meta.destBase58} tx=${sig}`);
+  return sig;
+}
+
+/** 批次领取：与 claimEscrow 同管线，多带 Merkle path；ALT 12 账户（无 escrow/sender）。 */
+export async function claimBatch(
+  deps: ClaimerDeps,
+  mail: { emlPath: string; batch: PublicKey; leafIndex: number }
+): Promise<string> {
+  const relayerField = relayerToField(deps.relayerKeypair.publicKey.toBytes());
+  const email = await loadClaimEmail(mail.emlPath, relayerField);
+  const meta = email.meta;
+
+  const batchAcc = await deps.program.account.batch.fetch(mail.batch);
+  if (Buffer.from(batchAcc.relayerEmailHash).compare(fieldToBE(BigInt(meta.relayerEmailHash))) !== 0) {
+    throw new Error("email relayerEmailHash does not match batch");
+  }
+  const path = await batchPath(mail.batch.toBase58(), mail.leafIndex);
+  const selector: string = meta.selector;
+  const registry = await ensureRegistry(deps, BigInt(meta.domainCommitment), selector, BigInt(meta.pubkeyHash));
+
+  const resp = await fetch(`${deps.proverUrl}/prove`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(email.inputs),
+  });
+  if (!resp.ok) throw new Error(`prover failed: ${resp.status} ${await resp.text()}`);
+  const { proof, publicSignals } = await resp.json();
+  const fixture = convertProofForSolana(proof, publicSignals);
+
+  const destOwner = new PublicKey(meta.destBase58);
+  const mint = new PublicKey(batchAcc.mint);
+  const vault = getAssociatedTokenAddressSync(mint, mail.batch, true);
+  const destAta = getAssociatedTokenAddressSync(mint, destOwner, true);
+  const nullifier = PublicKey.findProgramAddressSync(
+    [Buffer.from("nullifier"), fieldToBE(BigInt(meta.emailNullifier))], deps.programId)[0];
+  const [protocolConfig] = PublicKey.findProgramAddressSync([Buffer.from("protocol")], deps.programId);
+
+  const recentSlot = await deps.connection.getSlot("finalized");
+  const [createAltIx, altAddress] = AddressLookupTableProgram.createLookupTable({
+    authority: deps.relayerKeypair.publicKey, payer: deps.relayerKeypair.publicKey, recentSlot,
+  });
+  const wallet = new anchor.Wallet(deps.relayerKeypair);
+  const provider = new anchor.AnchorProvider(deps.connection, wallet, { commitment: "confirmed" });
+  await provider.sendAndConfirm(new Transaction().add(createAltIx), []);
+  await provider.sendAndConfirm(new Transaction().add(
+    AddressLookupTableProgram.extendLookupTable({
+      payer: deps.relayerKeypair.publicKey, authority: deps.relayerKeypair.publicKey,
+      lookupTable: altAddress,
+      addresses: [
+        deps.programId, anchor.web3.SystemProgram.programId, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+        mint, mail.batch, vault, registry, destOwner, destAta, nullifier, protocolConfig,
+      ],
+    })
+  ), []);
+  const extendedSlot = await deps.connection.getSlot();
+  for (let i = 0; i < 20 && (await deps.connection.getSlot()) <= extendedSlot; i++) await sleep(400);
+  let altAccount: AddressLookupTableAccount | null = null;
+  for (let i = 0; i < 10; i++) {
+    const res = await deps.connection.getAddressLookupTable(altAddress);
+    if (res.value && res.value.state.addresses.length === 12) { altAccount = res.value; break; }
+    await sleep(400);
+  }
+  if (!altAccount) throw new Error("address lookup table not ready");
+
+  const tx = await deps.program.methods
+    .claimBatch({
+      proofA: fixture.proofA, proofB: fixture.proofB, proofC: fixture.proofC,
+      publicInputs: fixture.publicInputs, selector,
+    }, path.siblings.map((s) => Array.from(s)), path.indices)
+    .accounts({
+      batch: mail.batch, vault, mint, registry, destOwner, destAta,
+      payer: deps.relayerKeypair.publicKey, nullifier, protocolConfig,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
+    .transaction();
+
+  let sig = "";
+  for (let attempt = 0; attempt < 3 && !sig; attempt++) {
+    const { blockhash, lastValidBlockHeight } = await deps.connection.getLatestBlockhash();
+    const msg = new TransactionMessage({
+      payerKey: deps.relayerKeypair.publicKey, recentBlockhash: blockhash,
+      instructions: tx.instructions,
+    }).compileToV0Message([altAccount]);
+    const vtx = new VersionedTransaction(msg);
+    vtx.sign([deps.relayerKeypair]);
+    try {
+      sig = await deps.connection.sendRawTransaction(vtx.serialize());
+      await deps.connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+    } catch { sig = ""; }
+  }
+  if (!sig) throw new Error("claim_batch tx failed to land after 3 attempts");
+  console.log(`[claimer] batch ${mail.batch.toBase58()} leaf ${mail.leafIndex} → ${meta.destBase58} tx=${sig}`);
   return sig;
 }

@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import { runIndexer } from "./indexer";
 import { runInboundFromEnv, InboundDeps, ClaimableMail } from "./inbound";
-import { claimEscrow, ClaimerDeps } from "./claimer";
+import { claimBatch, claimEscrow, ClaimerDeps } from "./claimer";
 import { ConsoleNotifier, gmailAuthFromEnv, Notifier } from "./notify";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -43,9 +43,10 @@ async function main() {
     while (queue.length > 0) {
       const mail = queue.shift()!;
       try {
-        await claimEscrow(claimerDeps, mail);
+        if (mail.batch) await claimBatch(claimerDeps, { emlPath: mail.emlPath, batch: mail.batch, leafIndex: mail.leafIndex! });
+        else await claimEscrow(claimerDeps, mail);
       } catch (e) {
-        console.error(`[relayer] claim failed for ${mail.escrow.toBase58()}:`, (e as Error)?.message ?? e);
+        console.error(`[relayer] claim failed for ${(mail.batch ?? mail.escrow).toBase58()}:`, (e as Error)?.message ?? e);
       }
     }
     working = false;
