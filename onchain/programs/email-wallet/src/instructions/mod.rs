@@ -1,3 +1,5 @@
+pub mod batch;
+pub use batch::*;
 pub mod claim;
 pub use claim::*;
 pub mod create_escrow;
