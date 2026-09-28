@@ -5,7 +5,8 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton, useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { BN } from "@coral-xyz/anchor";
 import { useAppConfig, useEmailWalletProgram, pollSignatureConfirmation } from "@/lib/solana";
-import { computeCommitment, fieldToBE32, sealEmailForRelayer } from "@/lib/zkCrypto";
+import { computeCommitment, fieldToBE32, sealEmailForRelayer, sealBytes } from "@/lib/zkCrypto";
+import { buildBatchTree } from "@/lib/merkle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +34,13 @@ export default function SendPage() {
   const [mine, setMine] = useState<MyEscrow[]>([]);
   const [walletTokens, setWalletTokens] = useState<TokenOption[] | null>(null);
   const [tokensError, setTokensError] = useState<string | null>(null);
+  type Mode = "single" | "batch";
+  const [mode, setMode] = useState<Mode>("single");
+  const [recipients, setRecipients] = useState<string[]>(["", "", ""]);
+  const [pasteText, setPasteText] = useState("");
+  const [expiryDays, setExpiryDays] = useState("7");
+  const [progress, setProgress] = useState<{ step: string; done: number; total: number } | null>(null);
+  const [doneBatch, setDoneBatch] = useState<{ batch: string; count: number; claimUrl: string } | null>(null);
 
   // 连上钱包后拉取钱包实际持有的 SPL 代币；断开时清空回退到静态配置。
   // 优先走 Worker 代理 /api/wallet-tokens（Helius API key 只存后端，且公共 RPC 常禁用
@@ -218,6 +226,100 @@ export default function SendPage() {
     }
   };
 
+  const submitBatch = async () => {
+    if (!mint) { setError("no mint configured"); return; }
+    if (!publicKey) { setWalletModalVisible(true); return; }
+    setBusy(true); setError(null); setDone(null); setDoneBatch(null); setProgress(null);
+    try {
+      const emails = Array.from(new Set(
+        recipients.map((r) => r.trim().toLowerCase()).filter((r) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r))
+      ));
+      if (emails.length === 0) throw new Error("no valid recipient emails");
+      const amountNum = parseFloat(amount);
+      if (!Number.isFinite(amountNum) || amountNum <= 0) throw new Error("invalid per-recipient amount");
+      const days = parseInt(expiryDays, 10);
+      if (!Number.isFinite(days) || days < 1) throw new Error("invalid expiry days");
+
+      const commitmentBytesList = [];
+      for (const e of emails) commitmentBytesList.push(fieldToBE32(await computeCommitment(e)));
+      const tree = await buildBatchTree(commitmentBytesList);
+      const cipher = sealBytes(new TextEncoder().encode(JSON.stringify(emails)), config.relayX25519Pk);
+      if (cipher.length > 64_000) throw new Error("recipient list too large (>64KB)");
+
+      const relayerEmailHash = fieldToBE32(await computeCommitment(config.relayEmail));
+      const mintPk = new PublicKey(mint.mint);
+      const raw = BigInt(Math.round(amountNum * 10 ** mint.decimals));
+      if (raw <= 0n) throw new Error("invalid amount");
+      const expireAt = Math.floor(Date.now() / 1000) + days * 86_400;
+
+      const [batchPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("batch"), publicKey.toBuffer(), Buffer.from(tree.root)], config.programId);
+      const [protocolPda] = PublicKey.findProgramAddressSync([Buffer.from("protocol")], config.programId);
+      const [relayerEntryPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("relayer"), Buffer.from(relayerEmailHash)], config.programId);
+      const protocol = await (program.account as any).protocolConfig.fetchNullable(protocolPda);
+      if (!protocol) throw new Error("protocol not initialized on this cluster");
+      const vault = getAssociatedTokenAddressSync(mintPk, batchPda, true);
+      const senderAta = getAssociatedTokenAddressSync(mintPk, publicKey);
+
+      const sendTx = async (tx: any, label: string, idx: number, total: number) => {
+        setProgress({ step: label, done: idx, total });
+        const { blockhash } = await connection.getLatestBlockhash("confirmed");
+        tx.recentBlockhash = blockhash;
+        tx.feePayer = publicKey;
+        if (!signTransaction) throw new Error("wallet does not support transaction signing");
+        const signed = await signTransaction(tx);
+        const sig = await connection.sendRawTransaction(signed.serialize());
+        await pollSignatureConfirmation(connection, sig);
+      };
+
+      const createTx = await (program.methods as any)
+        .createBatch(
+          Array.from(tree.root), new BN(raw.toString()), emails.length, cipher.length,
+          new BN(expireAt), Array.from(relayerEmailHash),
+        )
+        .accounts({
+          batch: batchPda, vault, mint: mintPk, senderAta, sender: publicKey,
+          config: protocolPda, treasury: protocol.treasury, relayerEntry: relayerEntryPda,
+          tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .transaction();
+      const totalTx = 1 + Math.ceil(cipher.length / 800) + 1;
+      await sendTx(createTx, "create batch", 1, totalTx);
+
+      const totalChunks = Math.ceil(cipher.length / 800);
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = Buffer.from(cipher.subarray(i * 800, (i + 1) * 800));
+        const appendTx = await (program.methods as any)
+          .appendBatchCipher(chunk)
+          .accounts({ batch: batchPda, sender: publicKey })
+          .transaction();
+        await sendTx(appendTx, `upload list ${i + 1}/${totalChunks}`, i + 2, totalTx);
+      }
+
+      const sealTx = await (program.methods as any)
+        .sealBatch()
+        .accounts({ batch: batchPda, sender: publicKey })
+        .transaction();
+      await sendTx(sealTx, "seal", totalTx, totalTx);
+
+      setDoneBatch({
+        batch: batchPda.toBase58(),
+        count: emails.length,
+        claimUrl: config.claimBaseUrl + batchPda.toBase58(),
+      });
+      setProgress(null);
+      await refreshTokens();
+    } catch (e: any) {
+      const msg = e?.message || e?.error?.errorMessage || e?.name || String(e);
+      setError(msg);
+      console.error("batch create failed", e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="container mx-auto max-w-xl px-4 py-8 space-y-6">
       <h1 className="text-2xl font-bold">Send tokens to an email</h1>
@@ -230,10 +332,54 @@ export default function SendPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex justify-end"><WalletMultiButton /></div>
-          <div className="space-y-2">
-            <Label htmlFor="email">Recipient email</Label>
-            <Input id="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="friend@gmail.com" />
+          <div className="flex gap-2 border-b pb-3">
+            {(["single", "batch"] as Mode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={`px-3 py-1 rounded text-sm ${mode === m ? "bg-primary text-primary-foreground" : "bg-muted"}`}
+              >
+                {m === "single" ? "单发" : "批量空投"}
+              </button>
+            ))}
           </div>
+          {mode === "batch" ? (
+            <div className="space-y-2">
+              <Label>Recipients（{recipients.filter((r) => r.trim()).length}）</Label>
+              {recipients.map((r, i) => (
+                <div key={i} className="flex gap-2">
+                  <Input
+                    value={r}
+                    placeholder={`recipient${i + 1}@example.com`}
+                    onChange={(e) => setRecipients(recipients.map((x, j) => (j === i ? e.target.value : x)))}
+                  />
+                  <Button type="button" variant="outline" onClick={() => setRecipients(recipients.filter((_, j) => j !== i))}>−</Button>
+                </div>
+              ))}
+              <Button type="button" variant="outline" onClick={() => setRecipients([...recipients, ""])}>+ 添加一行</Button>
+              <textarea
+                className="w-full border rounded p-2 bg-background text-sm"
+                rows={3}
+                placeholder="或粘贴邮箱列表（逗号/空格/换行分隔），粘贴即填充"
+                value={pasteText}
+                onChange={(e) => {
+                  setPasteText(e.target.value);
+                  const emails = e.target.value.split(/[\s,;]+/).filter((x) => x.trim());
+                  if (emails.length > 0) setRecipients(emails);
+                }}
+              />
+              <div className="space-y-2">
+                <Label>Expiry（days，过期后未领取部分可退款）</Label>
+                <Input value={expiryDays} onChange={(e) => setExpiryDays(e.target.value)} placeholder="7" />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="email">Recipient email</Label>
+              <Input id="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="friend@gmail.com" />
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="mint">Token</Label>
             <select
@@ -270,10 +416,26 @@ export default function SendPage() {
               </p>
             )}
           </div>
-          <Button className="w-full" disabled={busy || !mint} onClick={() => void submit()}>
-            {busy ? "Sending…" : publicKey ? "Send (irreversible)" : "Connect wallet to send"}
+          <Button className="w-full" disabled={busy || !mint}
+            onClick={() => void (mode === "batch" ? submitBatch() : submit())}>
+            {busy
+              ? progress
+                ? `${progress.step} (${progress.done}/${progress.total})…`
+                : "Sending…"
+              : publicKey
+                ? mode === "batch"
+                  ? `Airdrop to ${recipients.filter((r) => r.trim()).length} recipient(s) (irreversible)`
+                  : "Send (irreversible)"
+                : "Connect wallet to send"}
           </Button>
           {error && <p className="text-sm text-destructive">{error}</p>}
+          {doneBatch && (
+            <div className="text-sm space-y-1 border rounded p-3">
+              <p>Batch: <code className="break-all">{doneBatch.batch}</code></p>
+              <p>Recipients: {doneBatch.count}（每人 {amount} {mint?.symbol}）</p>
+              <p>Claim link: <a className="underline break-all" href={doneBatch.claimUrl} target="_blank" rel="noreferrer">{doneBatch.claimUrl}</a></p>
+            </div>
+          )}
           {done && (
             <div className="text-sm space-y-1 border rounded p-3">
               <p>Escrow: <code className="break-all">{done.escrow}</code></p>

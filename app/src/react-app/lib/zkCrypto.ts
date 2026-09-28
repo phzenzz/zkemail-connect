@@ -62,10 +62,8 @@ export function relayerToField(pk: Uint8Array): bigint {
 const CIPHER_VERSION = 1;
 const HEADER_LEN = 1 + 32 + 24;
 
-/** blob = version(1) || eph_x25519_pk(32) || nonce(24) || XSalsa20-Poly1305 密文 */
-export function sealEmailForRelayer(email: string, relayerPk: Uint8Array): Uint8Array {
-  const plaintext = new TextEncoder().encode(email);
-  if (plaintext.length > 64) throw new Error("email too long (max 64 bytes)");
+/** 任意长度明文密封（批量收件人列表用）；与 relayer/crypto.ts sealBytes 同格式。 */
+export function sealBytes(plaintext: Uint8Array, relayerPk: Uint8Array): Uint8Array {
   const eph = nacl.box.keyPair();
   const nonce = nacl.randomBytes(24);
   const box = nacl.box(plaintext, nonce, relayerPk, eph.secretKey);
@@ -75,6 +73,14 @@ export function sealEmailForRelayer(email: string, relayerPk: Uint8Array): Uint8
   blob.set(eph.publicKey, 1);
   blob.set(nonce, 33);
   blob.set(box, HEADER_LEN);
+  return blob;
+}
+
+/** blob = version(1) || eph_x25519_pk(32) || nonce(24) || XSalsa20-Poly1305 密文 */
+export function sealEmailForRelayer(email: string, relayerPk: Uint8Array): Uint8Array {
+  const plaintext = new TextEncoder().encode(email);
+  if (plaintext.length > 64) throw new Error("email too long (max 64 bytes)");
+  const blob = sealBytes(plaintext, relayerPk);
   if (blob.length > MAX_CIPHER_LEN) throw new Error("cipher too long");
   return blob;
 }
