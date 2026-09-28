@@ -65,6 +65,7 @@ export function fieldToBE(s: string): Buffer {
 export interface State {
   mint?: string;
   escrow?: string;
+  batch?: string;   // 06 步创建
   meta?: Record<string, unknown>;
   /** 04 步生成的 relayer x25519 私钥（hex），供 relayer/indexer.ts 解密用。 */
   relayerX25519Secret?: string;
