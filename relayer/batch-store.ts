@@ -27,13 +27,27 @@ async function commitmentsOf(cache: BatchCache): Promise<Buffer[]> {
 
 export function loadCaches(): BatchCache[] {
   if (!fs.existsSync(DIR)) return [];
-  return fs.readdirSync(DIR).filter((f) => f.endsWith(".json"))
-    .map((f) => JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8")) as BatchCache);
+  const out: BatchCache[] = [];
+  for (const f of fs.readdirSync(DIR).filter((f) => f.endsWith(".json"))) {
+    try {
+      const c = JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8")) as BatchCache;
+      if (!c || typeof c.batch !== "string" || !Array.isArray(c.emails)) throw new Error("bad shape");
+      out.push(c);
+    } catch (err) {
+      console.warn(`[batch-store] skipping corrupt cache file ${f}:`, (err as Error)?.message ?? err);
+    }
+  }
+  return out;
 }
 
 export function saveCache(c: BatchCache): void {
   fs.mkdirSync(DIR, { recursive: true });
-  fs.writeFileSync(path.join(DIR, `${c.batch}.json`), JSON.stringify(c, null, 2));
+  // 原子写：tmp 文件 + rename，避免进程崩溃在 writeFileSync 中途留下截断 JSON
+  // （坏文件会让 loadCaches/findLeafByCommitment 对每封邮件抛错，阻断入站处理）
+  const target = path.join(DIR, `${c.batch}.json`);
+  const tmp = path.join(DIR, `${c.batch}.json.tmp`);
+  fs.writeFileSync(tmp, JSON.stringify(c, null, 2));
+  fs.renameSync(tmp, target);
 }
 
 export function removeCache(batch: string): void {
