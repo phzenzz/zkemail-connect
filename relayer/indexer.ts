@@ -8,7 +8,7 @@ import path from "path";
 import { computeCommitment } from "../circuits/scripts/poseidon";
 import { buildBatchTree } from "../circuits/scripts/merkle";
 import { openBytes, openEmailCipher, relayerEmailHash } from "./crypto";
-import { saveCache } from "./batch-store";
+import { saveCache, removeCache } from "./batch-store";
 import { ConsoleNotifier, gmailAuthFromEnv, Notifier } from "./notify";
 
 const ROOT = path.resolve(__dirname, "..");
@@ -137,6 +137,16 @@ export async function runIndexer(): Promise<void> {
       await processBatch(e.batch);
     } catch (err) {
       console.error(`[indexer] batchSealed handler error:`, err);
+    }
+  });
+
+  // close_batch（领完或过期退款）后批次账户关闭、缓存即失效：
+  // 不清理会让过期/关闭批次持续劫持入站邮件（白白走 prover + ALT 租金后才链上被拒）
+  program.addEventListener("batchClosed", (e: any) => {
+    try {
+      removeCache(e.batch.toBase58());
+    } catch (err) {
+      console.error(`[indexer] batchClosed handler error:`, err);
     }
   });
 

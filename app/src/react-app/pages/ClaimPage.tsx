@@ -12,6 +12,7 @@ type EscrowState =
   | { kind: "loading" }
   | { kind: "missing" }
   | { kind: "open"; amount: bigint; mint: PublicKey }
+  | { kind: "batch"; batch: PublicKey; amount: bigint; mint: PublicKey; claimedCount: number; leafCount: number; expireAt: bigint }
   | { kind: "claimed" };
 
 export default function ClaimPage() {
@@ -25,12 +26,22 @@ export default function ClaimPage() {
 
   const refresh = useCallback(async () => {
     if (!program || !escrow) return;
+    const pk = new PublicKey(escrow);
+    // 批量领取链接指向批次地址（/claim/<batchPda>）：escrow 查不到时回退查 batch
     try {
-      const pk = new PublicKey(escrow);
       const acc = await (program.account as any).escrow.fetchNullable(pk);
-      if (!acc) setState({ kind: "claimed" });
-      else setState({ kind: "open", amount: BigInt(acc.amount.toString()), mint: acc.mint });
-    } catch (e: any) {
+      if (acc) { setState({ kind: "open", amount: BigInt(acc.amount.toString()), mint: acc.mint }); return; }
+    } catch { /* discriminator 不匹配会抛错，继续尝试 batch */ }
+    try {
+      const b = await (program.account as any).batch.fetchNullable(pk);
+      if (!b) { setState({ kind: "claimed" }); return; }
+      setState({
+        kind: "batch", batch: pk,
+        amount: BigInt(b.amountPerRecipient.toString()), mint: b.mint,
+        claimedCount: Number(b.claimedCount.toString()), leafCount: Number(b.leafCount.toString()),
+        expireAt: BigInt(b.expireAt.toString()),
+      });
+    } catch {
       setState({ kind: "missing" });
     }
   }, [program, escrow]);
@@ -44,7 +55,11 @@ export default function ClaimPage() {
   }, [refresh]);
 
   if (!config) return null;
-  const mintMeta = config.mints.find((m) => state.kind === "open" && m.mint === state.mint.toBase58());
+  const mintMeta = config.mints.find((m) =>
+    (state.kind === "open" || state.kind === "batch") && m.mint === state.mint.toBase58());
+  const fmtAmount = (amt: bigint) =>
+    mintMeta ? (Number(amt) / 10 ** mintMeta.decimals).toString() : amt.toString();
+  const symbol = mintMeta?.symbol ?? "";
   const destOk = DEST_RE.test(dest.trim());
   const mailto = `mailto:${config.relayEmail}?subject=${encodeURIComponent(dest.trim())}`;
 
@@ -60,7 +75,7 @@ export default function ClaimPage() {
         <Card>
           <CardHeader>
             <CardTitle>
-              You received {mintMeta ? (Number(state.amount) / 10 ** mintMeta.decimals).toString() : state.amount.toString()} {mintMeta?.symbol ?? ""}
+              You received {fmtAmount(state.amount)} {symbol}
             </CardTitle>
             <CardDescription>Reply by email to claim — no wallet needed for the reply, only a receiving address.</CardDescription>
           </CardHeader>
@@ -88,6 +103,25 @@ export default function ClaimPage() {
                 </p>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+      {state.kind === "batch" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              You received {fmtAmount(state.amount)} {symbol} (batch airdrop)
+            </CardTitle>
+            <CardDescription>
+              This link is a batch airdrop. Reply to the notification email from {config.relayEmail}
+              with your Solana address as the subject — the relayer processes your claim and sends the tokens.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <p>Batch: <code className="break-all">{state.batch.toBase58()}</code></p>
+            <p>Per recipient: {fmtAmount(state.amount)} {symbol}</p>
+            <p>Claimed: {state.claimedCount} / {state.leafCount}</p>
+            <p>Expires: {new Date(Number(state.expireAt) * 1000).toLocaleString()}</p>
           </CardContent>
         </Card>
       )}

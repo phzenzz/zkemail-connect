@@ -87,8 +87,8 @@ async function handleOne(
   const c32 = new Uint8Array(32);
   let v = commitment;
   for (let i = 31; i >= 0; i--) { c32[i] = Number(v & 0xffn); v >>= 8n; }
-  // 批次优先：缓存命中即批次领取；否则回退单发 escrow 扫描
-  const hit = await findLeafByCommitment(Buffer.from(c32));
+  // 批次优先：缓存命中（且链上批次未过期/未关闭）即批次领取；否则回退单发 escrow 扫描
+  const hit = await findLeafByCommitment(Buffer.from(c32), deps.connection);
   const emlPath = path.join(tmpDir, `inbound-${uid}.eml`);
   fs.writeFileSync(emlPath, raw);
   if (hit) {

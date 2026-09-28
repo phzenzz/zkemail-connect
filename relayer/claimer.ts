@@ -237,7 +237,7 @@ export async function claimBatch(
     .claimBatch({
       proofA: fixture.proofA, proofB: fixture.proofB, proofC: fixture.proofC,
       publicInputs: fixture.publicInputs, selector,
-    }, path.siblings.map((s) => Array.from(s)), path.indices)
+    }, path.siblings.map((s) => Array.from(s)), Buffer.from(path.indices))
     .accounts({
       batch: mail.batch, vault, mint, registry, destOwner, destAta,
       payer: deps.relayerKeypair.publicKey, nullifier, protocolConfig,
