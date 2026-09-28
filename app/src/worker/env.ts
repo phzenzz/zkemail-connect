@@ -6,6 +6,8 @@ export type Env = {
   CLAIM_BASE_URL: string;
   MINTS_JSON: string; // [{mint,symbol,decimals}]
   SESSIONS: KVNamespace;
+  /** Helius devnet RPC 的 API key；只存于后端，用于代查钱包代币等读请求。 */
+  HELIUS_API_KEY?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   /** 仅本地开发用；生产 secrets 里不应存在此变量。 */

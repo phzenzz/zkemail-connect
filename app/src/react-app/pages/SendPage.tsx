@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { AccountLayout, MintLayout, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton, useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { BN } from "@coral-xyz/anchor";
-import { useAppConfig, useEmailWalletProgram } from "@/lib/solana";
+import { useAppConfig, useEmailWalletProgram, pollSignatureConfirmation } from "@/lib/solana";
 import { computeCommitment, fieldToBE32, sealEmailForRelayer } from "@/lib/zkCrypto";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,20 +12,102 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type MyEscrow = { addr: PublicKey; mint: PublicKey; amount: bigint; commitment: number[] };
+type TokenOption = { mint: string; symbol: string; decimals: number; balance?: bigint };
+
+function formatTokenAmount(raw: bigint, decimals: number): string {
+  return (Number(raw) / 10 ** decimals).toLocaleString(undefined, { maximumFractionDigits: decimals });
+}
 
 export default function SendPage() {
   const config = useAppConfig();
   const program = useEmailWalletProgram();
-  const { publicKey } = useWallet();
+  const { publicKey, signTransaction } = useWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const { connection } = useConnection();
   const [email, setEmail] = useState("");
-  const [mintIdx, setMintIdx] = useState(0);
+  const [mintChoice, setMintChoice] = useState("");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ escrow: string; claimUrl: string } | null>(null);
   const [mine, setMine] = useState<MyEscrow[]>([]);
+  const [walletTokens, setWalletTokens] = useState<TokenOption[] | null>(null);
+  const [tokensError, setTokensError] = useState<string | null>(null);
+
+  // 连上钱包后拉取钱包实际持有的 SPL 代币；断开时清空回退到静态配置。
+  // 优先走 Worker 代理 /api/wallet-tokens（Helius API key 只存后端，且公共 RPC 常禁用
+  // getTokenAccountsByOwner）；后端未配 key（本地 validator 场景）时直连当前 RPC。
+  const withTimeout = useCallback(<T,>(p: Promise<T>, ms: number, what: string) =>
+    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what}超时`)), ms))]), []);
+
+  const refreshTokens = useCallback(async () => {
+    if (!publicKey || !config) {
+      setWalletTokens(null);
+      setTokensError(null);
+      return;
+    }
+    try {
+      const decimalsByMint = new Map<string, number>();
+      const held: { mint: PublicKey; amount: bigint }[] = [];
+
+      const proxyRes = await withTimeout(fetch(`/api/wallet-tokens/${publicKey.toBase58()}`), 15_000, "代币查询");
+      if (proxyRes.ok) {
+        const j = await proxyRes.json();
+        for (const t of j.tokens ?? []) {
+          decimalsByMint.set(t.mint, t.decimals);
+          held.push({ mint: new PublicKey(t.mint), amount: BigInt(t.amount) });
+        }
+      } else if (proxyRes.status === 503) {
+        // 后端无 Helius key：直连 RPC（base64 + 本地解码，兼容性最好）
+        const resp = await withTimeout(
+          connection.getTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID }),
+          15_000,
+          "代币查询",
+        );
+        const direct = resp.value
+          .map((v) => {
+            const { mint, amount } = AccountLayout.decode(v.account.data);
+            return { mint, amount };
+          })
+          .filter((t) => t.amount > 0n);
+        const mintInfos = await connection.getMultipleAccountsInfo(direct.map((t) => t.mint));
+        direct.forEach((t, i) => {
+          if (mintInfos[i]) decimalsByMint.set(t.mint.toBase58(), MintLayout.decode(mintInfos[i].data).decimals);
+        });
+        held.push(...direct);
+      } else {
+        const j = await proxyRes.json().catch(() => null);
+        throw new Error(j?.error ?? `wallet-tokens HTTP ${proxyRes.status}`);
+      }
+
+      const tokens: TokenOption[] = held
+        .filter((t) => decimalsByMint.has(t.mint.toBase58()))
+        .map((t) => {
+          const mint = t.mint.toBase58();
+          const cfg = config.mints.find((m) => m.mint === mint);
+          return {
+            mint,
+            symbol: cfg?.symbol ?? `${mint.slice(0, 4)}…${mint.slice(-4)}`,
+            decimals: decimalsByMint.get(mint)!,
+            balance: t.amount,
+          };
+        });
+      // 配置内（可发托管）的代币排前面，其余按余额降序
+      tokens.sort((a, b) => {
+        const ai = config.mints.findIndex((m) => m.mint === a.mint);
+        const bi = config.mints.findIndex((m) => m.mint === b.mint);
+        if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+        return Number(b.balance! - a.balance!);
+      });
+      setWalletTokens(tokens);
+      setTokensError(null);
+    } catch (e: any) {
+      console.error("refreshTokens failed", e);
+      setTokensError(e?.message ?? String(e));
+    }
+  }, [publicKey, connection, config, withTimeout]);
+
+  useEffect(() => { refreshTokens().catch(console.error); }, [refreshTokens]);
 
   const refreshMine = useCallback(async () => {
     if (!program || !publicKey || !config) return;
@@ -46,7 +128,9 @@ export default function SendPage() {
   useEffect(() => { refreshMine().catch(console.error); }, [refreshMine]);
 
   if (!config || !program) return null;
-  const mint = config.mints[mintIdx] ?? config.mints[0];
+  // 已连接钱包：展示钱包实际持有的代币；未连接：回退到静态配置列表
+  const tokenOptions: TokenOption[] = walletTokens ?? config.mints;
+  const mint = tokenOptions.find((t) => t.mint === mintChoice) ?? tokenOptions[0];
 
   const submit = async () => {
     if (!mint) {
@@ -85,7 +169,7 @@ export default function SendPage() {
       const decimals = mint.decimals;
       const raw = BigInt(Math.round(amountNum * 10 ** decimals));
       if (raw <= 0n) throw new Error("invalid amount");
-      const sig = await (program.methods as any)
+      const tx = await (program.methods as any)
         .createEscrow(
           Array.from(commitmentBytes),
           new BN(raw.toString()),
@@ -106,11 +190,20 @@ export default function SendPage() {
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .rpc();
+        .transaction();
+      // 不用 .rpc()：其内部 confirmTransaction 依赖 ws 订阅，RPC 走 HTTP 代理时会挂死。
+      // 手动签名 + 发送 + 轮询确认（pollSignatureConfirmation）。
+      const { blockhash } = await connection.getLatestBlockhash("confirmed");
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = publicKey;
+      if (!signTransaction) throw new Error("wallet does not support transaction signing");
+      const signed = await signTransaction(tx);
+      const sig = await connection.sendRawTransaction(signed.serialize());
+      await pollSignatureConfirmation(connection, sig);
       const claimUrl = config.claimBaseUrl + escrowPda.toBase58();
       setDone({ escrow: escrowPda.toBase58(), claimUrl });
-      await connection.confirmTransaction(sig, "confirmed");
       await refreshMine();
+      await refreshTokens();
     } catch (e: any) {
       const msg =
         e?.message ||
@@ -143,15 +236,39 @@ export default function SendPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="mint">Token</Label>
-            <select id="mint" className="w-full border rounded p-2 bg-background" value={mintIdx} onChange={(e) => setMintIdx(Number(e.target.value))}>
-              {config.mints.map((m, i) => (
-                <option key={m.mint} value={i}>{m.symbol} ({m.mint.slice(0, 8)}…)</option>
+            <select
+              id="mint"
+              className="w-full border rounded p-2 bg-background"
+              value={mint?.mint ?? ""}
+              onChange={(e) => setMintChoice(e.target.value)}
+            >
+              {tokenOptions.length === 0 && (
+                <option value="" disabled>
+                  {!publicKey ? "无可用代币" : tokensError ? "代币加载失败" : "此钱包暂无代币"}
+                </option>
+              )}
+              {tokenOptions.map((t) => (
+                <option key={t.mint} value={t.mint}>
+                  {t.symbol}
+                  {t.balance !== undefined && ` · 余额 ${formatTokenAmount(t.balance, t.decimals)}`}
+                  {" "}({t.mint.slice(0, 8)}…)
+                </option>
               ))}
             </select>
+            {publicKey && tokensError && (
+              <p className="text-xs text-destructive">
+                代币加载失败：{tokensError}（未配 HELIUS_API_KEY 时当前 RPC 可能禁用了代币查询，请在 app/.dev.vars 配置后重启）
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="amount">Amount</Label>
             <Input id="amount" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="10" />
+            {mint?.balance !== undefined && (
+              <p className="text-xs text-muted-foreground">
+                钱包余额: {formatTokenAmount(mint.balance, mint.decimals)} {mint.symbol}
+              </p>
+            )}
           </div>
           <Button className="w-full" disabled={busy || !mint} onClick={() => void submit()}>
             {busy ? "Sending…" : publicKey ? "Send (irreversible)" : "Connect wallet to send"}

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, type Connection } from "@solana/web3.js";
 import { AnchorProvider, Program } from "@coral-xyz/anchor";
 import { ConnectionProvider, WalletProvider, useConnection, useAnchorWallet } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
@@ -77,9 +77,34 @@ export function useEmailWalletProgram(): Program | null {
   const anchorWallet = useAnchorWallet();
   return useMemo(() => {
     if (!config) return null;
-    // 未连钱包时用只读占位；连上后用 useAnchorWallet 才能正确签名 .rpc()
+    // 未连钱包时用只读占位；连上后用 useAnchorWallet 才能正确签名交易
     const signer = anchorWallet ?? ({ publicKey: null } as never);
     const provider = new AnchorProvider(connection, signer as any, { commitment: "confirmed" });
     return new Program(idl as any, provider);
   }, [config, connection, anchorWallet]);
+}
+
+/**
+ * 确认交易：getSignatureStatuses 轮询。
+ * RPC 走 Worker HTTP 代理（/api/rpc）时没有 ws 订阅可用，web3.js 的
+ * confirmTransaction 会挂在 ws 上不动，因此统一改用轮询（本地直连场景同样适用）。
+ */
+export async function pollSignatureConfirmation(
+  connection: Connection,
+  signature: string,
+  commitment: "confirmed" | "finalized" = "confirmed",
+  timeoutMs = 90_000,
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    const { value } = await connection.getSignatureStatuses([signature]);
+    const status = value[0];
+    if (status) {
+      if (status.err) throw new Error(`交易链上执行失败: ${JSON.stringify(status.err)}`);
+      const confirmationStatus = (status as { confirmationStatus?: string }).confirmationStatus;
+      if (confirmationStatus === commitment || confirmationStatus === "finalized") return;
+    }
+    if (Date.now() - start > timeoutMs) throw new Error("交易确认超时");
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
 }
