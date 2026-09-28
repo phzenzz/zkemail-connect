@@ -15,6 +15,8 @@ import { ata, conn, fieldToBE, loadKeypair, loadProgram, loadState, programId, r
 import { relayerEmailHash, sealBytes } from "../../relayer/crypto";
 
 const AMOUNT_PER = 25_000_000; // 每人 25 代币
+// 只能指向与 01 步解析的 e2e.eml 相同的邮件：leaf 0 承诺绑 state.meta.commitment，
+// 换邮件不会在前置步骤报错，但会静默打破该绑定，链上 claim 时以 BatchInvalidProof 失败。
 const EML = process.env.CLAIM_EML ?? `${ROOT}/circuits/testdata/emails/claim.eml`;
 
 // anchor 0.32 的 emit! 在 logMessages 里落成 `Program data: base64(discriminator || 事件数据)`，
