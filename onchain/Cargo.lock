@@ -929,6 +929,7 @@ dependencies = [
  "anchor-spl",
  "five8",
  "groth16-solana",
+ "solana-program",
 ]
 
 [[package]]

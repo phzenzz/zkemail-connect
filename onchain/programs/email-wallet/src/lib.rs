@@ -129,4 +129,13 @@ pub mod email_wallet {
     pub fn close_batch(ctx: Context<CloseBatch>) -> Result<()> {
         instructions::close_batch(ctx)
     }
+
+    pub fn claim_batch(
+        ctx: Context<ClaimBatch>,
+        args: ClaimArgs,
+        merkle_siblings: Vec<[u8; 32]>,
+        merkle_indices: Vec<u8>,
+    ) -> Result<()> {
+        instructions::claim_batch(ctx, args, merkle_siblings, merkle_indices)
+    }
 }
