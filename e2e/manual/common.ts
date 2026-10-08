@@ -7,7 +7,7 @@ import { Program } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 
 export const ROOT = path.resolve(__dirname, "../..");
-export const RPC = "http://127.0.0.1:8899";
+export const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8899"; // devnet: RPC_URL=https://api.devnet.solana.com
 export const EML = path.join(ROOT, "circuits/testdata/emails/e2e.eml");
 export const STATE_DIR = path.join(ROOT, ".manual-test");
 export const STATE_FILE = path.join(STATE_DIR, "state.json");
