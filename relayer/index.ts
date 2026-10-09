@@ -73,9 +73,20 @@ async function main() {
     claimBase: cfg.claimBaseUrl, notifier,
   }).catch((e) => { console.error("[indexer] fatal:", e); process.exit(1); });
 
-  // inbound 需真实 Gmail 凭证；未配置时跳过（通知已降级，无回复可收）
+  // inbound 需真实 Gmail 凭证；未配置时跳过（通知已降级，无回复可收）。
+  // 监督重启：IMAP 长连接死于网络抖动（如 TLS 握手被重置）不应拖垮 indexer——
+  // 崩溃后 30s 退避重连，由 runInbound 内部循环保证单次轮询的错误不逃逸。
   if (cfg.gmail) {
-    void runInboundFromEnv(deps).catch((e) => { console.error("[inbound] fatal:", e); process.exit(1); });
+    void (async function supervise() {
+      for (;;) {
+        try {
+          await runInboundFromEnv(deps);
+        } catch (e) {
+          console.error("[inbound] crashed, retry in 30s:", (e as Error)?.message ?? e);
+          await new Promise((r) => setTimeout(r, 30_000));
+        }
+      }
+    })();
   }
 
   console.log(`[relayer] up: rpc=${cfg.rpcUrl} relayer=${relayerKeypair.publicKey.toBase58()}`);
