@@ -53,6 +53,8 @@ async function main() {
   const commitment0 = fieldToBE(state.meta.commitment as string);
   const commitment1 = randomBytes(32);
   const tree = buildBatchTree([commitment0, commitment1]);
+  // 持久化叶子承诺：claim 段网络失败时可单独断点重跑（path 依赖同一棵树）
+  saveState({ batchLeaves: [commitment0.toString("hex"), commitment1.toString("hex")] });
   const batch = PublicKey.findProgramAddressSync(
     [Buffer.from("batch"), sender.publicKey.toBuffer(), tree.root], programId())[0];
 
