@@ -82,6 +82,7 @@ export async function runIndexer(deps: IndexerDeps): Promise<void> {
         amount: amount.toString(),
         claimUrl: claimBase + escrowAddr.toBase58(),
       });
+      console.log(`[indexer] escrow ${escrowAddr.toBase58()}: notified ${recipient}`);
     } catch (e) {
       console.error(`[indexer] notify ${recipient} failed:`, (e as Error)?.message ?? e);
     }
@@ -113,6 +114,7 @@ export async function runIndexer(deps: IndexerDeps): Promise<void> {
       return;
     }
     saveCache({ batch: batchAddr.toBase58(), root: tree.root.toString("hex"), emails });
+    let notified = 0;
     for (const recipient of emails) {
       try {
         await notifier.notify(recipient, {
@@ -121,11 +123,12 @@ export async function runIndexer(deps: IndexerDeps): Promise<void> {
           amount: acc.amountPerRecipient.toString(),
           claimUrl: claimBase + batchAddr.toBase58(),
         });
+        notified++;
       } catch (e) {
         console.error(`[indexer] notify ${recipient} failed:`, (e as Error)?.message ?? e);
       }
     }
-    console.log(`[indexer] batch ${batchAddr.toBase58()}: ${emails.length} recipient(s) notified`);
+    console.log(`[indexer] batch ${batchAddr.toBase58()}: ${notified}/${emails.length} recipient(s) notified`);
   }
 
   program.addEventListener("batchCreated", async (e: any) => {
@@ -215,6 +218,10 @@ export async function runIndexer(deps: IndexerDeps): Promise<void> {
   console.log(`[indexer] backfilled ${batchAccounts.length} batch(es)`);
 
   console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
+
+  // 长驻：事件订阅由 websocket 维持。函数必须保持 pending——若在此返回，
+  // supervise 会把它当正常退出反复重启，导致订阅叠加与重复回填。
+  await new Promise(() => {});
 }
 
 // 独立运行入口（被 index.ts import 时不触发）：组合根本身，调 loadConfig 后运行。
