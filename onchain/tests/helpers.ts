@@ -11,6 +11,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
+import { randomBytes } from "crypto";
 import { use } from "chai";
 import chaiAsPromised from "chai-as-promised";
 
@@ -82,6 +83,17 @@ export function protocolConfigPda() {
 export function nullifierPda(emailNullifier: Buffer) {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("nullifier"), emailNullifier],
+    program.programId
+  )[0];
+}
+
+/** 批次随机因子（issue #9）：同收件人列表凭不同 nonce 可重复发送。 */
+export const randNonce = () => new anchor.BN(randomBytes(8).toString("hex"), 16);
+/** nonce → 8 字节 LE 种子，与 Rust 侧 nonce.to_le_bytes() 一致。 */
+export const batchNonceSeed = (nonce: anchor.BN) => nonce.toArrayLike(Buffer, "le", 8);
+export function batchPda(sender: PublicKey, root: Buffer, nonce: anchor.BN) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("batch"), sender.toBuffer(), root, batchNonceSeed(nonce)],
     program.programId
   )[0];
 }

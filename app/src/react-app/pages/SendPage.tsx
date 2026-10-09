@@ -252,14 +252,11 @@ export default function SendPage() {
       if (raw <= 0n) throw new Error("invalid amount");
       const expireAt = Math.floor(Date.now() / 1000) + days * 86_400;
 
-      const [batchPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("batch"), publicKey.toBuffer(), Buffer.from(tree.root)], config.programId);
       const [protocolPda] = PublicKey.findProgramAddressSync([Buffer.from("protocol")], config.programId);
       const [relayerEntryPda] = PublicKey.findProgramAddressSync(
         [Buffer.from("relayer"), Buffer.from(relayerEmailHash)], config.programId);
       const protocol = await (program.account as any).protocolConfig.fetchNullable(protocolPda);
       if (!protocol) throw new Error("protocol not initialized on this cluster");
-      const vault = getAssociatedTokenAddressSync(mintPk, batchPda, true);
       const senderAta = getAssociatedTokenAddressSync(mintPk, publicKey);
 
       const sendTx = async (tx: any, label: string, idx: number, total: number) => {
@@ -273,29 +270,72 @@ export default function SendPage() {
         await pollSignatureConfirmation(connection, sig);
       };
 
-      const createTx = await (program.methods as any)
-        .createBatch(
-          Array.from(tree.root), new BN(raw.toString()), emails.length, cipher.length,
-          new BN(expireAt), Array.from(relayerEmailHash),
-        )
-        .accounts({
-          batch: batchPda, vault, mint: mintPk, senderAta, sender: publicKey,
-          config: protocolPda, treasury: protocol.treasury, relayerEntry: relayerEntryPda,
-          tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-        })
-        .transaction();
-      const totalTx = 1 + Math.ceil(cipher.length / 800) + 1;
-      await sendTx(createTx, "create batch", 1, totalTx);
+      // issue #9：批次 PDA = ["batch", sender, merkle_root, nonce]，nonce 随机 → 同一收件人列表
+      // 可重复发送。localStorage 草稿记录已上链 createBatch 的 nonce：append/seal 中断后复用
+      // 同一 nonce 续传收尾，避免留下未 seal 的孤儿批次锁资金；sealed 的草稿说明是同笔误重试，
+      // 丢弃后换新 nonce 重新发一批。地址被占仅可能是自己的草稿（碰撞 ~1/2^64），重试即解。
+      const rootBuf = Buffer.from(tree.root);
+      const nonceSeed = (n: BN) => n.toArrayLike(Buffer, "le", 8); // 与 Rust nonce.to_le_bytes() 一致
+      const randomNonce = () => {
+        const b = new Uint8Array(8);
+        globalThis.crypto.getRandomValues(b);
+        return new BN(Buffer.from(b).toString("hex"), 16);
+      };
+      const draftKey = `batch-draft:${publicKey.toBase58()}:${rootBuf.toString("hex")}`;
+      const draft = window.localStorage.getItem(draftKey);
 
-      const totalChunks = Math.ceil(cipher.length / 800);
+      let nonce: BN | null = null;
+      let batchPda: PublicKey | null = null;
+      let existing: any = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const candidate = attempt === 0 && draft ? new BN(draft) : randomNonce();
+        const candidatePda = PublicKey.findProgramAddressSync(
+          [Buffer.from("batch"), publicKey.toBuffer(), rootBuf, nonceSeed(candidate)], config.programId)[0];
+        const acc = await (program.account as any).batch.fetchNullable(candidatePda);
+        if (!acc || !acc.sealed) {
+          nonce = candidate; batchPda = candidatePda; existing = acc;
+          break;
+        }
+        if (attempt === 0 && draft) window.localStorage.removeItem(draftKey); // sealed：同笔误重试，换新发一批
+      }
+      if (!nonce || !batchPda) throw new Error("批次地址反复被占用，请重试");
+
+      const vault = getAssociatedTokenAddressSync(mintPk, batchPda, true);
+
+      const uploaded = (existing?.recipientsCipher as Uint8Array | undefined)?.length ?? 0;
+      if (existing && uploaded > cipher.length) throw new Error("链上批次密文长度异常，批次状态与本次发送不匹配");
+
+      const needCreate = !existing;
+      const tail = cipher.subarray(uploaded);
+      const totalChunks = Math.ceil(tail.length / 800);
+      const totalTx = (needCreate ? 1 : 0) + totalChunks + 1;
+      let idx = 0;
+
+      if (needCreate) {
+        const createTx = await (program.methods as any)
+          .createBatch(
+            Array.from(tree.root), new BN(raw.toString()), emails.length, cipher.length,
+            new BN(expireAt), Array.from(relayerEmailHash), nonce,
+          )
+          .accounts({
+            batch: batchPda, vault, mint: mintPk, senderAta, sender: publicKey,
+            config: protocolPda, treasury: protocol.treasury, relayerEntry: relayerEntryPda,
+            tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .transaction();
+        await sendTx(createTx, "create batch", ++idx, totalTx);
+        // createBatch 已上链：记下 nonce，后续 append/seal 中断可凭草稿续传
+        window.localStorage.setItem(draftKey, nonce.toString());
+      }
+
       for (let i = 0; i < totalChunks; i++) {
-        const chunk = Buffer.from(cipher.subarray(i * 800, (i + 1) * 800));
+        const chunk = Buffer.from(tail.subarray(i * 800, (i + 1) * 800));
         const appendTx = await (program.methods as any)
           .appendBatchCipher(chunk)
           .accounts({ batch: batchPda, sender: publicKey })
           .transaction();
-        await sendTx(appendTx, `upload list ${i + 1}/${totalChunks}`, i + 2, totalTx);
+        await sendTx(appendTx, `upload list ${i + 1}/${totalChunks}`, ++idx, totalTx);
       }
 
       const sealTx = await (program.methods as any)
@@ -303,6 +343,7 @@ export default function SendPage() {
         .accounts({ batch: batchPda, sender: publicKey })
         .transaction();
       await sendTx(sealTx, "seal", totalTx, totalTx);
+      window.localStorage.removeItem(draftKey); // 批次已完成，草稿无保留意义
 
       setDoneBatch({
         batch: batchPda.toBase58(),

@@ -16,7 +16,8 @@ const DIR = path.resolve(__dirname, "data", "batches");
 
 // Batch.expire_at（i64 LE）的字节偏移，与 state.rs 布局一致：8 disc + 32 sender + 32 mint
 // + 32 merkle_root + 32 relayer_email_hash + 8 amount_per_recipient + 8 total_amount
-// + 4 leaf_count + 4 claimed_count + 4 cipher_len_expected = 164（sealed @ 172，indexer 同款）
+// + 4 leaf_count + 4 claimed_count + 4 cipher_len_expected = 164（sealed @ 172，indexer 同款）。
+// nonce(u64) 在 bump 之后、变长 vec 之前，不影响上述偏移（issue #9）。
 const BATCH_EXPIRE_AT_OFFSET = 164;
 
 function fieldToBE(v: bigint): Buffer {

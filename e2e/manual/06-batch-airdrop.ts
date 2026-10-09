@@ -7,6 +7,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction, TransactionMessage, VersionedTransaction, AddressLookupTableAccount, AddressLookupTableProgram } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, getAccount, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { execFileSync } from "child_process";
+import { randomBytes } from "crypto";
 import fs from "fs";
 import nacl from "tweetnacl";
 import { buildBatchTree, merklePath } from "../../circuits/scripts/merkle";
@@ -57,8 +58,11 @@ async function main() {
   const tree = buildBatchTree([commitment0, commitment1]);
   // 持久化叶子承诺：claim 段网络失败时可单独断点重跑（path 依赖同一棵树）
   saveState({ batchLeaves: [commitment0.toString("hex"), commitment1.toString("hex")] });
+  // issue #9：nonce 随机因子，同收件人列表可重复发送（每次运行得到新批次）
+  const batchNonce = new anchor.BN(randomBytes(8).toString("hex"), 16);
   const batch = PublicKey.findProgramAddressSync(
-    [Buffer.from("batch"), sender.publicKey.toBuffer(), tree.root], programId())[0];
+    [Buffer.from("batch"), sender.publicKey.toBuffer(), tree.root, batchNonce.toArrayLike(Buffer, "le", 8)],
+    programId())[0];
 
   // 密文 = 真实邮箱列表（relayer 解密后据此通知 + 重建树）
   const x25519 = nacl.box.keyPair.fromSecretKey(Buffer.from(state.relayerX25519Secret, "hex"));
@@ -66,7 +70,7 @@ async function main() {
   console.log(`[06] cipher=${cipher.length}B root=${tree.root.toString("hex").slice(0, 16)}… emails=${emails.join(",")}`);
 
   await program.methods.createBatch(Array.from(tree.root), new anchor.BN(AMOUNT_PER), 2, cipher.length,
-    new anchor.BN(Math.floor(Date.now() / 1000) + 7 * 86_400), Array.from(relayerHash))
+    new anchor.BN(Math.floor(Date.now() / 1000) + 7 * 86_400), Array.from(relayerHash), batchNonce)
     .accounts({
       batch, mint, vault: ata(mint, batch), senderAta, sender: sender.publicKey,
       config: protocolConfig, treasury: cfg.treasury, relayerEntry,

@@ -8,13 +8,13 @@ use crate::events::{BatchClosed, BatchCreated, BatchSealed};
 use crate::state::{Batch, ProtocolConfig, RelayerEntry, BATCH_CIPHER_MAX, BATCH_MAX_LEAVES, MIN_EXPIRY_SECS};
 
 #[derive(Accounts)]
-#[instruction(merkle_root: [u8; 32], amount_per_recipient: u64, leaf_count: u32, cipher_len_expected: u32, expire_at: i64, relayer_email_hash: [u8; 32])]
+#[instruction(merkle_root: [u8; 32], amount_per_recipient: u64, leaf_count: u32, cipher_len_expected: u32, expire_at: i64, relayer_email_hash: [u8; 32], nonce: u64)]
 pub struct CreateBatch<'info> {
     #[account(
         init,
         payer = sender,
         space = Batch::space(cipher_len_expected as usize, leaf_count),
-        seeds = [b"batch", sender.key().as_ref(), merkle_root.as_ref()],
+        seeds = [b"batch", sender.key().as_ref(), merkle_root.as_ref(), nonce.to_le_bytes().as_ref()],
         bump,
     )]
     pub batch: Account<'info, Batch>,
@@ -58,6 +58,7 @@ pub fn create_batch(
     cipher_len_expected: u32,
     expire_at: i64,
     relayer_email_hash: [u8; 32],
+    nonce: u64,
 ) -> Result<()> {
     require!(amount_per_recipient > 0, ErrorCode::InvalidAmount);
     require!(leaf_count >= 1 && leaf_count <= BATCH_MAX_LEAVES, ErrorCode::BatchTooManyLeaves);
@@ -99,6 +100,7 @@ pub fn create_batch(
     batch.expire_at = expire_at;
     batch.sealed = false;
     batch.bump = ctx.bumps.batch;
+    batch.nonce = nonce;
     batch.claimed = vec![0u8; (leaf_count as usize + 7) / 8];
     batch.recipients_cipher = Vec::new();
 
@@ -130,7 +132,7 @@ pub fn create_batch(
 
 #[derive(Accounts)]
 pub struct AppendBatchCipher<'info> {
-    #[account(mut, seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref()], bump = batch.bump)]
+    #[account(mut, seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref(), batch.nonce.to_le_bytes().as_ref()], bump = batch.bump)]
     pub batch: Account<'info, Batch>,
     #[account(mut)]
     pub sender: Signer<'info>,
@@ -150,7 +152,7 @@ pub fn append_batch_cipher(ctx: Context<AppendBatchCipher>, chunk: Vec<u8>) -> R
 
 #[derive(Accounts)]
 pub struct SealBatch<'info> {
-    #[account(mut, seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref()], bump = batch.bump)]
+    #[account(mut, seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref(), batch.nonce.to_le_bytes().as_ref()], bump = batch.bump)]
     pub batch: Account<'info, Batch>,
     #[account(mut)]
     pub sender: Signer<'info>,
@@ -177,7 +179,7 @@ pub struct CloseBatch<'info> {
     #[account(
         mut,
         close = sender,
-        seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref()],
+        seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref(), batch.nonce.to_le_bytes().as_ref()],
         bump = batch.bump,
     )]
     pub batch: Account<'info, Batch>,
@@ -213,10 +215,12 @@ pub fn close_batch(ctx: Context<CloseBatch>) -> Result<()> {
 
     // 未领取余款退回 sender，随后关闭 vault（租金 → sender）与 batch 账户（租金 → sender）
     let remaining = ctx.accounts.vault.amount;
+    let nonce_bytes = batch.nonce.to_le_bytes();
     let seeds: &[&[u8]] = &[
         b"batch",
         batch.sender.as_ref(),
         batch.merkle_root.as_ref(),
+        nonce_bytes.as_ref(),
         &[batch.bump],
     ];
     if remaining > 0 {

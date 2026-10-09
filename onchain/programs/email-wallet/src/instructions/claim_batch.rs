@@ -45,7 +45,7 @@ pub(crate) fn verify_batch_path(
 
 #[derive(Accounts)]
 pub struct ClaimBatch<'info> {
-    #[account(mut, seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref()], bump = batch.bump)]
+    #[account(mut, seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref(), batch.nonce.to_le_bytes().as_ref()], bump = batch.bump)]
     pub batch: Account<'info, Batch>,
 
     #[account(mut, associated_token::mint = mint, associated_token::authority = batch)]
@@ -157,10 +157,12 @@ pub fn claim_batch(
     )?;
 
     // 打款该叶份额；批次与 vault 保持开放，直到领完或过期由 sender 关闭退款
+    let nonce_bytes = batch.nonce.to_le_bytes();
     let seeds: &[&[u8]] = &[
         b"batch",
         batch.sender.as_ref(),
         batch.merkle_root.as_ref(),
+        nonce_bytes.as_ref(),
         &[batch.bump],
     ];
     token::transfer(

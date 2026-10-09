@@ -106,6 +106,7 @@ pub mod email_wallet {
         cipher_len_expected: u32,
         expire_at: i64,
         relayer_email_hash: [u8; 32],
+        nonce: u64,
     ) -> Result<()> {
         instructions::create_batch(
             ctx,
@@ -115,6 +116,7 @@ pub mod email_wallet {
             cipher_len_expected,
             expire_at,
             relayer_email_hash,
+            nonce,
         )
     }
 

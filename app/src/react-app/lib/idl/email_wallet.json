@@ -44,6 +44,11 @@
                 "kind": "account",
                 "path": "batch.merkle_root",
                 "account": "Batch"
+              },
+              {
+                "kind": "account",
+                "path": "batch.nonce",
+                "account": "Batch"
               }
             ]
           }
@@ -205,27 +210,10 @@
         },
         {
           "name": "registry",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  107,
-                  105,
-                  109
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "args.public_inputs [6]"
-              },
-              {
-                "kind": "arg",
-                "path": "args.selector"
-              }
-            ]
-          }
+          "docs": [
+            "try_accounts 内物化 ClaimArgs ~560B，叠加 13 账户的 init CPI 使生成的",
+            "try_accounts 栈帧超 4096B、在新 SBF VM 上 access violation）。"
+          ]
         },
         {
           "name": "dest_owner"
@@ -330,29 +318,11 @@
         },
         {
           "name": "nullifier",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  110,
-                  117,
-                  108,
-                  108,
-                  105,
-                  102,
-                  105,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "args.public_inputs [7]"
-              }
-            ]
-          }
+          "docs": [
+            "（与 #[account(init, seeds=...))] 等价 exactly-once：已存在则 create 失败）。",
+            "动机同上：把 init CPI 从生成的 try_accounts 移出，压栈帧回 4096 内。"
+          ],
+          "writable": true
         },
         {
           "name": "protocol_config",
@@ -434,6 +404,11 @@
               {
                 "kind": "account",
                 "path": "batch.merkle_root",
+                "account": "Batch"
+              },
+              {
+                "kind": "account",
+                "path": "batch.nonce",
                 "account": "Batch"
               }
             ]
@@ -533,28 +508,7 @@
           "name": "mint"
         },
         {
-          "name": "registry",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  107,
-                  105,
-                  109
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "args.public_inputs [6]"
-              },
-              {
-                "kind": "arg",
-                "path": "args.selector"
-              }
-            ]
-          }
+          "name": "registry"
         },
         {
           "name": "dest_owner"
@@ -659,29 +613,7 @@
         },
         {
           "name": "nullifier",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  110,
-                  117,
-                  108,
-                  108,
-                  105,
-                  102,
-                  105,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "args.public_inputs [7]"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "protocol_config",
@@ -778,6 +710,11 @@
               {
                 "kind": "account",
                 "path": "batch.merkle_root",
+                "account": "Batch"
+              },
+              {
+                "kind": "account",
+                "path": "batch.nonce",
                 "account": "Batch"
               }
             ]
@@ -1021,6 +958,10 @@
               {
                 "kind": "arg",
                 "path": "merkle_root"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
               }
             ]
           }
@@ -1307,6 +1248,10 @@
               32
             ]
           }
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
         }
       ]
     },
@@ -2024,6 +1969,11 @@
                 "kind": "account",
                 "path": "batch.merkle_root",
                 "account": "Batch"
+              },
+              {
+                "kind": "account",
+                "path": "batch.nonce",
+                "account": "Batch"
               }
             ]
           }
@@ -2660,10 +2610,11 @@
       "name": "Batch",
       "docs": [
         "批量空投批次。v1 等额：amount_per_recipient × leaf_count = total_amount。",
-        "字节布局：8(disc) + 32×4 + 8×2 + 4×3 + 8 + 1 + 1 = 174 固定前缀，",
+        "字节布局：8(disc) + 32×4 + 8×2 + 4×3 + 8 + 1 + 1 + 8(nonce) = 182 固定前缀，",
         "之后 claimed vec(4+B) 与 recipients_cipher vec(4+C)——vec 数据区在 init 时",
         "按 cipher_len_expected 全额预留，append 只做内存 extend，Anchor 序列化原样写回，",
-        "无需 realloc。"
+        "无需 realloc。",
+        "nonce 置于变长 vec 之前：expire_at@164、sealed@172 偏移不变（relayer/indexer 常量零改动）。"
       ],
       "type": {
         "kind": "struct",
@@ -2725,6 +2676,10 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "nonce",
+            "type": "u64"
           },
           {
             "name": "claimed",

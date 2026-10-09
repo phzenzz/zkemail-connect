@@ -78,10 +78,11 @@ pub const MAX_MERKLE_DEPTH: u16 = 16;
 pub const MIN_EXPIRY_SECS: i64 = 3_600;
 
 /// 批量空投批次。v1 等额：amount_per_recipient × leaf_count = total_amount。
-/// 字节布局：8(disc) + 32×4 + 8×2 + 4×3 + 8 + 1 + 1 = 174 固定前缀，
+/// 字节布局：8(disc) + 32×4 + 8×2 + 4×3 + 8 + 1 + 1 + 8(nonce) = 182 固定前缀，
 /// 之后 claimed vec(4+B) 与 recipients_cipher vec(4+C)——vec 数据区在 init 时
 /// 按 cipher_len_expected 全额预留，append 只做内存 extend，Anchor 序列化原样写回，
 /// 无需 realloc。
+/// nonce 置于变长 vec 之前：expire_at@164、sealed@172 偏移不变（relayer/indexer 常量零改动）。
 #[account]
 pub struct Batch {
     pub sender: Pubkey,              // 32  创建者/退款接收人
@@ -96,13 +97,14 @@ pub struct Batch {
     pub expire_at: i64,              // 8
     pub sealed: bool,                // 1   @ 字节偏移 172（indexer 回填过滤用）
     pub bump: u8,                    // 1
+    pub nonce: u64,                  // 8   PDA 种子随机因子：同收件人列表可重复发送（issue #9）
     pub claimed: Vec<u8>,            // 4 + ceil(leaf_count/8)  领取位图
     pub recipients_cipher: Vec<u8>,  // 4 + ≤ BATCH_CIPHER_MAX
 }
 
 impl Batch {
     pub fn space(cipher_len_expected: usize, leaf_count: u32) -> usize {
-        8 + 32 * 4 + 8 * 2 + 4 * 3 + 8 + 1 + 1
+        8 + 32 * 4 + 8 * 2 + 4 * 3 + 8 + 1 + 1 + 8
             + 4 + (leaf_count as usize + 7) / 8
             + 4 + cipher_len_expected
     }

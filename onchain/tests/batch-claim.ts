@@ -8,7 +8,7 @@ import fs from "fs";
 import { buildBatchTree, merklePath } from "../../circuits/scripts/merkle";
 import {
   program, provider, ata, fundSender, fieldToBE, relayerEntryPda, protocolConfigPda,
-  nullifierPda, registryPda, configPda, createAltAccount, sendV0Tx,
+  nullifierPda, registryPda, configPda, createAltAccount, sendV0Tx, randNonce, batchPda,
 } from "./helpers";
 
 // 与 claim.eml / sweep.eml 同 From 邮箱的新邮件；不存在时 zk 用例自动跳过
@@ -65,11 +65,11 @@ describe("claim_batch", () => {
   const setupBatch = async (commitments: Buffer[], relayerEmailHash: Buffer) => {
     const tree = buildBatchTree(commitments);
     const root = tree.root;
-    const batch = PublicKey.findProgramAddressSync(
-      [Buffer.from("batch"), sender.publicKey.toBuffer(), root], program.programId)[0];
+    const nonce = randNonce();
+    const batch = batchPda(sender.publicKey, root, nonce);
     const cipherLen = 64;
     await program.methods.createBatch(Array.from(root), new anchor.BN(AMOUNT), commitments.length, cipherLen,
-      new anchor.BN(Math.floor(Date.now() / 1000) + 86_400), Array.from(relayerEmailHash))
+      new anchor.BN(Math.floor(Date.now() / 1000) + 86_400), Array.from(relayerEmailHash), nonce)
       .accounts({
         batch, mint, vault: ata(mint, batch), senderAta, sender: sender.publicKey,
         config: protocolConfigPda(), treasury: treasury.publicKey, relayerEntry: relayerEntryPda(relayerEmailHash),
@@ -99,10 +99,10 @@ describe("claim_batch", () => {
     const proof = fakeProof();
     const c = randomBytes(32);
     const tree = buildBatchTree([c]);
-    const batch = PublicKey.findProgramAddressSync(
-      [Buffer.from("batch"), sender.publicKey.toBuffer(), tree.root], program.programId)[0];
+    const nonce = randNonce();
+    const batch = batchPda(sender.publicKey, tree.root, nonce);
     await program.methods.createBatch(Array.from(tree.root), new anchor.BN(AMOUNT), 1, 32,
-      new anchor.BN(Math.floor(Date.now() / 1000) + 86_400), Array.from(fakeHash))
+      new anchor.BN(Math.floor(Date.now() / 1000) + 86_400), Array.from(fakeHash), nonce)
       .accounts({
         batch, mint, vault: ata(mint, batch), senderAta, sender: sender.publicKey,
         config: protocolConfigPda(), treasury: treasury.publicKey, relayerEntry: relayerEntryPda(fakeHash),
@@ -151,10 +151,10 @@ describe("claim_batch", () => {
     proof.publicInputs[1] = Array.from(c1);
     const tree = buildBatchTree([c0, c1]);
     const root = tree.root;
-    const batch = PublicKey.findProgramAddressSync(
-      [Buffer.from("batch"), sender.publicKey.toBuffer(), root], program.programId)[0];
+    const nonce = randNonce();
+    const batch = batchPda(sender.publicKey, root, nonce);
     await program.methods.createBatch(Array.from(root), new anchor.BN(AMOUNT), 1, 32,
-      new anchor.BN(Math.floor(Date.now() / 1000) + 86_400), Array.from(relayerHashFromProof))
+      new anchor.BN(Math.floor(Date.now() / 1000) + 86_400), Array.from(relayerHashFromProof), nonce)
       .accounts({
         batch, mint, vault: ata(mint, batch), senderAta, sender: sender.publicKey,
         config: protocolConfigPda(), treasury: treasury.publicKey, relayerEntry: relayerEntryPda(relayerHashFromProof),
