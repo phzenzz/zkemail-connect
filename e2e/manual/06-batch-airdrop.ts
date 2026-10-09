@@ -7,7 +7,6 @@ import * as anchor from "@coral-xyz/anchor";
 import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction, TransactionMessage, VersionedTransaction, AddressLookupTableAccount, AddressLookupTableProgram } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, getAccount, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { execFileSync } from "child_process";
-import { randomBytes } from "crypto";
 import fs from "fs";
 import nacl from "tweetnacl";
 import { buildBatchTree, merklePath } from "../../circuits/scripts/merkle";
@@ -49,19 +48,22 @@ async function main() {
   const cfg = await program.account.protocolConfig.fetch(protocolConfig);
   const senderAta = getAssociatedTokenAddressSync(mint, sender.publicKey);
 
-  // leaf 0 = 真实 From 的 commitment（proof 绑定它）；leaf 1 = 随机
+  // leaf 0 = 真实 From 的 commitment（proof 绑定它，取自 meta）；leaf 1 = 第二邮箱的 commitment。
+  // 密文邮箱与树叶一一对应：indexer 解密后会重算 root 与链上比对（防篡改），两边必须一致。
+  const emails = [state.meta.fromEmail as string, "batch-holder@example.com"];
   const commitment0 = fieldToBE(state.meta.commitment as string);
-  const commitment1 = randomBytes(32);
+  const { computeCommitment } = await import("../../circuits/scripts/poseidon");
+  const commitment1 = fieldToBE((await computeCommitment(emails[1])).toString());
   const tree = buildBatchTree([commitment0, commitment1]);
   // 持久化叶子承诺：claim 段网络失败时可单独断点重跑（path 依赖同一棵树）
   saveState({ batchLeaves: [commitment0.toString("hex"), commitment1.toString("hex")] });
   const batch = PublicKey.findProgramAddressSync(
     [Buffer.from("batch"), sender.publicKey.toBuffer(), tree.root], programId())[0];
 
-  // 密文邮箱仅用于通知演示；真实使用须填真实收件邮箱
+  // 密文 = 真实邮箱列表（relayer 解密后据此通知 + 重建树）
   const x25519 = nacl.box.keyPair.fromSecretKey(Buffer.from(state.relayerX25519Secret, "hex"));
-  const cipher = sealBytes(Buffer.from(JSON.stringify(["holder0@example.com", "holder1@example.com"])), x25519.publicKey);
-  console.log(`[06] cipher=${cipher.length}B root=${tree.root.toString("hex").slice(0, 16)}…`);
+  const cipher = sealBytes(Buffer.from(JSON.stringify(emails)), x25519.publicKey);
+  console.log(`[06] cipher=${cipher.length}B root=${tree.root.toString("hex").slice(0, 16)}… emails=${emails.join(",")}`);
 
   await program.methods.createBatch(Array.from(tree.root), new anchor.BN(AMOUNT_PER), 2, cipher.length,
     new anchor.BN(Math.floor(Date.now() / 1000) + 7 * 86_400), Array.from(relayerHash))
