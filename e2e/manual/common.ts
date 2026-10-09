@@ -66,6 +66,8 @@ export interface State {
   mint?: string;
   escrow?: string;
   batch?: string;   // 06 步创建
+  /** 06 步持久化的批次叶子承诺（hex），claim 段网络失败时可断点重跑 */
+  batchLeaves?: string[];
   meta?: Record<string, unknown>;
   /** 04 步生成的 relayer x25519 私钥（hex），供 relayer/indexer.ts 解密用。 */
   relayerX25519Secret?: string;

@@ -19,7 +19,12 @@
     "app:deploy": "npm --prefix app run deploy",
     "relayer:run": "npx tsx relayer/index.ts",
     "gmail:oauth-setup": "npx tsx relayer/scripts/gmail-oauth-setup.ts",
-    "crypto-parity": "cd app && npx tsx scripts/crypto-parity.ts"
+    "crypto-parity": "cd app && npx tsx scripts/crypto-parity.ts",
+    "relayer": "tsx --env-file=.env relayer/index.ts",
+    "relayer:local": "tsx --env-file=.env --env-file=.env.local relayer/index.ts",
+    "relayer:devnet": "tsx --env-file=.env --env-file=.env.devnet relayer/index.ts",
+    "relayer:print-config": "tsx --env-file=.env --env-file=.env.devnet relayer/print-config.ts",
+    "relayer:print-config:local": "tsx --env-file=.env --env-file=.env.local relayer/print-config.ts"
   },
   "dependencies": {
     "imapflow": "^1.7.8",

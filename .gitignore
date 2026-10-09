@@ -12,3 +12,5 @@ docs/superpowers/
 test-ledger/
 .env
 relayer/data/
+.env.devnet
+.env.local

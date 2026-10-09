@@ -1,6 +1,5 @@
-// relayer 链上索引器：启动回填存量 escrow → 监听 EscrowCreated → 过滤本 relayer → 解密 → 哈希校验 → 通知。
-// 环境变量：RELAYER_EMAIL（发件邮箱，即 relayer 标识）、RELAYER_X25519_SECRET_HEX（32 字节 hex）、
-//           RPC_URL（默认 http://127.0.0.1:8899）、CLAIM_BASE_URL（默认 http://localhost:3000/claim/）
+// relayer 链上索引器：启动回填存量 escrow/batch → 监听事件 → 过滤本 relayer → 解密 → 哈希校验 → 通知。
+// 配置经 IndexerDeps 注入（组合根 relayer/index.ts 调 loadConfig 后传入）；本模块不直接读 env。
 import * as anchor from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import fs from "fs";
@@ -9,7 +8,7 @@ import { computeCommitment } from "../circuits/scripts/poseidon";
 import { buildBatchTree } from "../circuits/scripts/merkle";
 import { openBytes, openEmailCipher, relayerEmailHash } from "./crypto";
 import { saveCache, removeCache } from "./batch-store";
-import { ConsoleNotifier, gmailAuthFromEnv, Notifier } from "./notify";
+import { Notifier } from "./notify";
 
 const ROOT = path.resolve(__dirname, "..");
 const IDL_PATH = path.join(ROOT, "onchain/target/idl/email_wallet.json");
@@ -34,23 +33,25 @@ function fieldToBE(v: bigint): Buffer {
   return b;
 }
 
-export async function runIndexer(): Promise<void> {
-  const email = process.env.RELAYER_EMAIL;
-  const secretHex = process.env.RELAYER_X25519_SECRET_HEX;
-  if (!email || !secretHex) throw new Error("RELAYER_EMAIL / RELAYER_X25519_SECRET_HEX required");
-  const secret = Buffer.from(secretHex, "hex");
-  if (secret.length !== 32) throw new Error("RELAYER_X25519_SECRET_HEX must be 32 bytes");
-  const claimBase = process.env.CLAIM_BASE_URL ?? "http://localhost:3000/claim/";
-  let notifier: Notifier = new ConsoleNotifier();
-  const gmailAuth = gmailAuthFromEnv(process.env);
-  if (gmailAuth) {
-    const { GmailNotifier } = await import("./notify");
-    notifier = new GmailNotifier({ user: email, auth: gmailAuth });
-    console.log(`[indexer] using GmailNotifier (${gmailAuth.kind} as ${email})`);
-  }
+export interface IndexerDeps {
+  connection: Connection;
+  /** relayer 邮箱（身份过滤：relayer_email_hash == Poseidon(email)） */
+  email: string;
+  /** x25519 私钥（32B，与链上 relayerEntry.x25519Key 对应） */
+  x25519Secret: Buffer;
+  /** 通知里的 claim 链接前缀 */
+  claimBase: string;
+  notifier: Notifier;
+}
+
+export async function runIndexer(deps: IndexerDeps): Promise<void> {
+  const { connection: conn, notifier } = deps;
+  const email = deps.email;
+  const secret = deps.x25519Secret;
+  if (secret.length !== 32) throw new Error("x25519 secret must be 32 bytes");
+  const claimBase = deps.claimBase;
 
   const idl = JSON.parse(fs.readFileSync(IDL_PATH, "utf8"));
-  const conn = new Connection(process.env.RPC_URL ?? "http://127.0.0.1:8899", "confirmed");
   const wallet = new anchor.Wallet(Keypair.generate());
   const provider = new anchor.AnchorProvider(conn, wallet, { commitment: "confirmed" });
   const program: any = new anchor.Program(idl as any, provider);
@@ -198,8 +199,22 @@ export async function runIndexer(): Promise<void> {
   console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
 }
 
-// 独立运行入口(e2e.ts 以 `npx tsx relayer/indexer.ts` 方式拉起;被 index.ts import 时不触发)
+// 独立运行入口（被 index.ts import 时不触发）：组合根本身，调 loadConfig 后运行。
 if (require.main === module) {
-  runIndexer().catch((e) => { console.error("[indexer] FAIL:", e?.message ?? e); process.exit(1); });
+  import("./config").then(async ({ loadConfig }) => {
+    const { Connection } = await import("@solana/web3.js");
+    const { ConsoleNotifier, GmailNotifier } = await import("./notify");
+    const cfg = loadConfig();
+    const notifier = cfg.gmail
+      ? new GmailNotifier({ user: cfg.email, auth: cfg.gmail })
+      : new ConsoleNotifier();
+    await runIndexer({
+      connection: new Connection(cfg.rpcUrl, "confirmed"),
+      email: cfg.email,
+      x25519Secret: cfg.x25519Secret,
+      claimBase: cfg.claimBaseUrl,
+      notifier,
+    });
+  }).catch((e) => { console.error("[indexer] FAIL:", e?.message ?? e); process.exit(1); });
 }
 
