@@ -18,6 +18,19 @@ import { ConsoleNotifier, GmailNotifier, Notifier } from "./notify";
 const ROOT = path.resolve(__dirname, "..");
 const IDL_PATH = path.join(ROOT, "onchain/target/idl/email_wallet.json");
 
+/** 长驻任务监督：崩溃打日志、30s 退避重启，永不让单点故障拖垮整机。 */
+async function supervise(name: string, run: () => Promise<void>): Promise<never> {
+  for (;;) {
+    try {
+      await run();
+      console.warn(`[${name}] exited normally, restarting in 30s`);
+    } catch (e) {
+      console.error(`[${name}] crashed, retry in 30s:`, (e as Error)?.message ?? e);
+    }
+    await new Promise((r) => setTimeout(r, 30_000));
+  }
+}
+
 async function main() {
   const cfg = loadConfig();
   console.log("[relayer] config:\n" + describeConfig(cfg));
@@ -67,26 +80,17 @@ async function main() {
     onClaimable: async (m) => { queue.push(m); void pump(); },
   };
 
-  // indexer 长期驻留：fire-and-forget；失败即退出（配置/链问题不容忍半瘫）
-  void runIndexer({
-    connection, email: cfg.email, x25519Secret: cfg.x25519Secret,
-    claimBase: cfg.claimBaseUrl, notifier,
-  }).catch((e) => { console.error("[indexer] fatal:", e); process.exit(1); });
+  // indexer 长期驻留。监督重启：与 inbound 同理——ws/RPC/SMTP 的瞬时故障
+  // （如 TLS 握手被代理切断）不应拖垮整机；崩溃后 30s 退避重连（重启即重新订阅+回填，幂等）。
+  void supervise("indexer", () =>
+    runIndexer({
+      connection, email: cfg.email, x25519Secret: cfg.x25519Secret,
+      claimBase: cfg.claimBaseUrl, notifier,
+    }));
 
   // inbound 需真实 Gmail 凭证；未配置时跳过（通知已降级，无回复可收）。
-  // 监督重启：IMAP 长连接死于网络抖动（如 TLS 握手被重置）不应拖垮 indexer——
-  // 崩溃后 30s 退避重连，由 runInbound 内部循环保证单次轮询的错误不逃逸。
   if (cfg.gmail) {
-    void (async function supervise() {
-      for (;;) {
-        try {
-          await runInboundFromEnv(deps);
-        } catch (e) {
-          console.error("[inbound] crashed, retry in 30s:", (e as Error)?.message ?? e);
-          await new Promise((r) => setTimeout(r, 30_000));
-        }
-      }
-    })();
+    void supervise("inbound", () => runInboundFromEnv(deps));
   }
 
   console.log(`[relayer] up: rpc=${cfg.rpcUrl} relayer=${relayerKeypair.publicKey.toBase58()}`);

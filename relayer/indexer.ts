@@ -75,12 +75,16 @@ export async function runIndexer(deps: IndexerDeps): Promise<void> {
       console.error(`[indexer] ${escrowAddr.toBase58()}: commitment mismatch, drop`);
       return;
     }
-    await notifier.notify(recipient, {
-      escrow: escrowAddr.toBase58(),
-      sender: sender.toBase58(),
-      amount: amount.toString(),
-      claimUrl: claimBase + escrowAddr.toBase58(),
-    });
+    try {
+      await notifier.notify(recipient, {
+        escrow: escrowAddr.toBase58(),
+        sender: sender.toBase58(),
+        amount: amount.toString(),
+        claimUrl: claimBase + escrowAddr.toBase58(),
+      });
+    } catch (e) {
+      console.error(`[indexer] notify ${recipient} failed:`, (e as Error)?.message ?? e);
+    }
   }
 
   // —— 批量空投：BatchCreated/BatchSealed → 解密列表 → 重算 root 比对 → 落缓存 → 逐邮箱通知 ——
@@ -110,12 +114,16 @@ export async function runIndexer(deps: IndexerDeps): Promise<void> {
     }
     saveCache({ batch: batchAddr.toBase58(), root: tree.root.toString("hex"), emails });
     for (const recipient of emails) {
-      await notifier.notify(recipient, {
-        escrow: batchAddr.toBase58(),
-        sender: (acc.sender as PublicKey).toBase58(),
-        amount: acc.amountPerRecipient.toString(),
-        claimUrl: claimBase + batchAddr.toBase58(),
-      });
+      try {
+        await notifier.notify(recipient, {
+          escrow: batchAddr.toBase58(),
+          sender: (acc.sender as PublicKey).toBase58(),
+          amount: acc.amountPerRecipient.toString(),
+          claimUrl: claimBase + batchAddr.toBase58(),
+        });
+      } catch (e) {
+        console.error(`[indexer] notify ${recipient} failed:`, (e as Error)?.message ?? e);
+      }
     }
     console.log(`[indexer] batch ${batchAddr.toBase58()}: ${emails.length} recipient(s) notified`);
   }
@@ -180,7 +188,11 @@ export async function runIndexer(deps: IndexerDeps): Promise<void> {
     const amount = data.readBigUInt64LE(AMOUNT_OFFSET); // 72..80
     const cipherLen = data.readUInt32LE(CIPHER_LEN_OFFSET);
     const emailCipher = Buffer.from(data.subarray(CIPHER_OFFSET, CIPHER_OFFSET + cipherLen));
-    await processEscrow(commitment, emailCipher, pubkey, sender, amount);
+    try {
+      await processEscrow(commitment, emailCipher, pubkey, sender, amount);
+    } catch (e) {
+      console.error(`[indexer] backfill ${pubkey.toBase58()} failed:`, (e as Error)?.message ?? e);
+    }
     backfilled++;
   }
   console.log(`[indexer] backfilled ${backfilled} escrow(s)`);
@@ -193,7 +205,13 @@ export async function runIndexer(deps: IndexerDeps): Promise<void> {
       { memcmp: { offset: 172, bytes: anchor.utils.bytes.bs58.encode(Buffer.from([1])) } },
     ],
   });
-  for (const { pubkey } of batchAccounts) await processBatch(pubkey);
+  for (const { pubkey } of batchAccounts) {
+    try {
+      await processBatch(pubkey);
+    } catch (e) {
+      console.error(`[indexer] backfill batch ${pubkey.toBase58()} failed:`, (e as Error)?.message ?? e);
+    }
+  }
   console.log(`[indexer] backfilled ${batchAccounts.length} batch(es)`);
 
   console.log(`[indexer] listening on ${conn.rpcEndpoint} ...`);
