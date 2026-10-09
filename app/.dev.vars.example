@@ -14,3 +14,16 @@ AUTH_DEV_BYPASS=1
 #    /api/wallet-tokens 查询钱包代币（key 只存于后端，不下发前端），
 #    解决公共 RPC 禁用 getTokenAccountsByOwner 导致资产列表为空的问题。
 # HELIUS_API_KEY=
+
+# 4) /api/config 前端配置（SendPage/ClaimPage 依赖；缺任一项前端报 "缺少 xxx"）
+#    relayer 的 x25519「公钥」hex（64 字符）——发送方按它加密收件人信息，
+#    必须与 relayer/indexer 解密用的 RELAYER_X25519_SECRET_HEX 是一对。
+RELAYER_X25519_PK_HEX=<relayer x25519 公钥 hex>
+# 与根 .env 的 RELAYER_EMAIL 保持一致（relayer 身份）
+RELAYER_EMAIL=<relay 邮箱>
+# 链上程序 ID（与 onchain/target/deploy keypair 对应）
+PROGRAM_ID=9Bk8J1CK23pH6zB5CMNZZvNimTfGeeAaHxopNbjURfBR
+# 前端直连的 RPC（无 HELIUS_API_KEY 时生效）
+RPC_URL=https://api.devnet.solana.com
+# 通知邮件/结果页的 claim 链接前缀（本地 dev 即 localhost:5173）
+CLAIM_BASE_URL=http://localhost:5173/claim/
