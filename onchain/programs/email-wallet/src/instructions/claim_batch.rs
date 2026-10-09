@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::{self, CreateAccount};
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 use solana_program::hash::hash;
@@ -43,7 +44,6 @@ pub(crate) fn verify_batch_path(
 }
 
 #[derive(Accounts)]
-#[instruction(args: ClaimArgs, merkle_siblings: Vec<[u8; 32]>, merkle_indices: Vec<u8>)]
 pub struct ClaimBatch<'info> {
     #[account(mut, seeds = [b"batch", batch.sender.as_ref(), batch.merkle_root.as_ref()], bump = batch.bump)]
     pub batch: Account<'info, Batch>,
@@ -53,10 +53,8 @@ pub struct ClaimBatch<'info> {
 
     pub mint: Account<'info, Mint>,
 
-    #[account(
-        seeds = [b"dkim", args.public_inputs[6].as_ref(), args.selector.as_bytes()],
-        bump = registry.bump,
-    )]
+    /// CHECK: PDA 由 handler 按 pi 重新推导并校验（动机见 claim.rs：压 try_accounts 栈帧）
+    #[account()]
     pub registry: Account<'info, DkimRegistry>,
 
     /// CHECK: dest owner, decoded from the proof and compared in the handler
@@ -74,8 +72,8 @@ pub struct ClaimBatch<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// CHECK: 零数据标记账户，存在即"该邮件已用过"；重复提交由 init 拒绝。
-    #[account(init, payer = payer, space = 8, seeds = [b"nullifier", args.public_inputs[7].as_ref()], bump)]
+    /// CHECK: 零数据标记账户；PDA 校验 + handler 手动创建（同 claim.rs）
+    #[account(mut)]
     pub nullifier: UncheckedAccount<'info>,
 
     #[account(seeds = [b"protocol"], bump = protocol_config.bump)]
@@ -101,6 +99,38 @@ pub fn claim_batch(
 
     let pi = zk::parse_public_inputs(&args.public_inputs)?;
     require!(pi.relayer_email_hash == batch.relayer_email_hash, ErrorCode::RelayerEmailHashMismatch);
+
+    // 手动校验 registry / nullifier PDA（同 claim.rs：压 try_accounts 栈帧）
+    let (registry_pda, _) = Pubkey::find_program_address(
+        &[b"dkim", pi.domain_commitment.as_ref(), args.selector.as_bytes()],
+        &crate::ID,
+    );
+    require!(ctx.accounts.registry.key() == registry_pda, ErrorCode::Unauthorized);
+    let (nullifier_pda, nullifier_bump) =
+        Pubkey::find_program_address(&[b"nullifier", pi.email_nullifier.as_ref()], &crate::ID);
+    require!(ctx.accounts.nullifier.key() == nullifier_pda, ErrorCode::Unauthorized);
+    require!(
+        ctx.accounts.nullifier.data_is_empty(),
+        ErrorCode::NullifierAlreadyUsed
+    );
+    let nullifier_seeds: &[&[u8]] = &[
+        b"nullifier",
+        pi.email_nullifier.as_ref(),
+        &[nullifier_bump],
+    ];
+    system_program::create_account(
+        CpiContext::new_with_signer(
+            ctx.accounts.system_program.to_account_info(),
+            CreateAccount {
+                from: ctx.accounts.payer.to_account_info(),
+                to: ctx.accounts.nullifier.to_account_info(),
+            },
+            &[nullifier_seeds],
+        ),
+        Rent::get()?.minimum_balance(8),
+        8,
+        &crate::ID,
+    )?;
 
     // Merkle 成员资格 + 叶子级 exactly-once（位图）
     let leaf_index = verify_batch_path(

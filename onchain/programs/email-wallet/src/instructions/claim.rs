@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::{self, CreateAccount};
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, CloseAccount, Mint, Token, TokenAccount, Transfer};
 use groth16_solana::groth16::Groth16Verifier;
@@ -20,7 +21,6 @@ pub struct ClaimArgs {
 }
 
 #[derive(Accounts)]
-#[instruction(args: ClaimArgs)]
 pub struct Claim<'info> {
     /// Escrow account existing = Open; closed here (rent -> sender).
     #[account(
@@ -40,10 +40,10 @@ pub struct Claim<'info> {
 
     pub mint: Account<'info, Mint>,
 
-    #[account(
-        seeds = [b"dkim", args.public_inputs[6].as_ref(), args.selector.as_bytes()],
-        bump = registry.bump,
-    )]
+    /// CHECK: PDA 由 handler 按 pi 重新推导并校验（避免 #[instruction] 在
+    /// try_accounts 内物化 ClaimArgs ~560B，叠加 13 账户的 init CPI 使生成的
+    /// try_accounts 栈帧超 4096B、在新 SBF VM 上 access violation）。
+    #[account()]
     pub registry: Account<'info, DkimRegistry>,
 
     /// CHECK: dest owner, decoded from the proof and compared in the handler
@@ -61,8 +61,10 @@ pub struct Claim<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// CHECK: 零数据标记账户，存在即"该邮件已用过"；重复提交由 init 拒绝。
-    #[account(init, payer = payer, space = 8, seeds = [b"nullifier", args.public_inputs[7].as_ref()], bump)]
+    /// CHECK: 零数据标记账户；PDA 由 handler 推导校验并由 handler 手动创建
+    /// （与 #[account(init, seeds=...))] 等价 exactly-once：已存在则 create 失败）。
+    /// 动机同上：把 init CPI 从生成的 try_accounts 移出，压栈帧回 4096 内。
+    #[account(mut)]
     pub nullifier: UncheckedAccount<'info>,
 
     #[account(seeds = [b"protocol"], bump = protocol_config.bump)]
@@ -79,6 +81,39 @@ pub fn claim(ctx: Context<Claim>, args: ClaimArgs) -> Result<()> {
     // 1. parse public inputs + bind commitment to the escrow being claimed
     let pi = zk::parse_public_inputs(&args.public_inputs)?;
     require!(pi.commitment == escrow.commitment, ErrorCode::CommitmentMismatch);
+
+    // 手动校验 registry / nullifier PDA（原 #[account(seeds=...)] 约束，
+    // 为压 try_accounts 栈帧移到 handler；校验强度等价：地址不符即拒绝）。
+    let (registry_pda, _) = Pubkey::find_program_address(
+        &[b"dkim", pi.domain_commitment.as_ref(), args.selector.as_bytes()],
+        &crate::ID,
+    );
+    require!(ctx.accounts.registry.key() == registry_pda, ErrorCode::Unauthorized);
+    let (nullifier_pda, nullifier_bump) =
+        Pubkey::find_program_address(&[b"nullifier", pi.email_nullifier.as_ref()], &crate::ID);
+    require!(ctx.accounts.nullifier.key() == nullifier_pda, ErrorCode::Unauthorized);
+    require!(
+        ctx.accounts.nullifier.data_is_empty(),
+        ErrorCode::NullifierAlreadyUsed
+    );
+    let nullifier_seeds: &[&[u8]] = &[
+        b"nullifier",
+        pi.email_nullifier.as_ref(),
+        &[nullifier_bump],
+    ];
+    system_program::create_account(
+        CpiContext::new_with_signer(
+            ctx.accounts.system_program.to_account_info(),
+            CreateAccount {
+                from: ctx.accounts.payer.to_account_info(),
+                to: ctx.accounts.nullifier.to_account_info(),
+            },
+            &[nullifier_seeds],
+        ),
+        Rent::get()?.minimum_balance(8),
+        8,
+        &crate::ID,
+    )?;
 
     // 2-6. registry + timestamp + relayer + dest + groth16 (shared with sweep_inbox)
     verify_claim_common(
