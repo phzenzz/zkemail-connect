@@ -34,16 +34,18 @@ describe("loadConfig", () => {
     expect(cfg.gmail).toBeNull();
   });
 
-  it("可选项覆盖：RPC_URL / PROVER_URL / CLAIM_BASE_URL", () => {
+  it("可选项覆盖：RPC_URL / PROVER_URL / CLAIM_BASE_URL / SQLITE_PATH", () => {
     const cfg = loadConfig(fullEnv({
       RELAYER_KEYPAIR_PATH: tmpKeypair,
       RPC_URL: "http://127.0.0.1:8899",
       PROVER_URL: "http://localhost:9999",
       CLAIM_BASE_URL: "http://localhost:5173/claim/",
+      SQLITE_PATH: "/tmp/x/relayer.db",
     }));
     expect(cfg.rpcUrl).toBe("http://127.0.0.1:8899");
     expect(cfg.proverUrl).toBe("http://localhost:9999");
     expect(cfg.claimBaseUrl).toBe("http://localhost:5173/claim/");
+    expect(cfg.sqlitePath).toBe("/tmp/x/relayer.db");
   });
 
   it("缺 RELAYER_EMAIL：清单式报错并给出修复指引", () => {

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { Connection, Keypair } from "@solana/web3.js";
 import { extractFromAndSubject, findOpenEscrow, runInbound, runInboundFromEnv } from "../../../relayer/inbound";
+import { RelayerStore } from "../../../relayer/store";
+
+// 入站测试的邮件流不走批次匹配（主题非 base58 即回引导），stub 即可满足 InboundDeps.store。
+const stubStore = () => ({ listBatches: async () => [] }) as unknown as RelayerStore;
 
 // rpc-websockets 的嵌套依赖 uuid@14 为纯 ESM,jest 默认不转换 node_modules 而解析失败;
 // 运行时 Node 20.19+ 的 require(esm) 正常。本测试只用 Connection/Keypair(不走 websocket),
@@ -86,6 +90,7 @@ describe("runInbound", () => {
       connection: {} as unknown as Connection,
       programId: Keypair.generate().publicKey,
       notifier: { notify: jest.fn<(...args: any[]) => any>() },
+      store: stubStore(),
       onClaimable: jest.fn<(...args: any[]) => any>(),
       pollMs: 60_000, // 长驻循环不退出;首轮断言后即可结束测试
     };
@@ -121,6 +126,7 @@ describe("runInbound", () => {
       connection: {} as unknown as Connection,
       programId: Keypair.generate().publicKey,
       notifier,
+      store: stubStore(),
       onClaimable: jest.fn<(...args: any[]) => any>(),
       pollMs: 60_000,
     };
@@ -153,6 +159,7 @@ describe("runInbound", () => {
         connection: {} as unknown as Connection,
         programId: Keypair.generate().publicKey,
         notifier,
+        store: stubStore(),
         onClaimable: jest.fn<(...args: any[]) => any>(),
         pollMs: 60_000,
       };
@@ -187,6 +194,7 @@ describe("runInbound", () => {
       connection: {} as unknown as Connection,
       programId: Keypair.generate().publicKey,
       notifier: { notify: jest.fn<(...args: any[]) => any>() },
+      store: stubStore(),
       onClaimable: jest.fn<(...args: any[]) => any>(),
       pollMs: 60_000,
     };
@@ -226,6 +234,7 @@ describe("runInboundFromEnv", () => {
     connection: {} as unknown as Connection,
     programId: Keypair.generate().publicKey,
     notifier: { notify: jest.fn<(...args: any[]) => any>() },
+    store: stubStore(),
     onClaimable: jest.fn<(...args: any[]) => any>(),
     pollMs: 60_000,
   });

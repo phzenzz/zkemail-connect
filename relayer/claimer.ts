@@ -10,6 +10,7 @@ import { loadClaimEmail } from "../circuits/scripts/load-email";
 import { convertProofForSolana } from "../circuits/scripts/convert-proof";
 import { relayerToField, computeDomainCommitment } from "../circuits/scripts/poseidon";
 import { batchPath } from "./batch-store";
+import { RelayerStore } from "./store";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -65,6 +66,7 @@ export interface ClaimerDeps {
   programId: PublicKey;
   relayerKeypair: Keypair; // 代付方;证明绑定该公钥;同时是 DKIM registry authority
   proverUrl: string;       // http://localhost:8080
+  store: RelayerStore;     // 批次缓存（merkle 路径重建）
 }
 
 export function buildAltAddressList(x: {
@@ -203,7 +205,7 @@ export async function claimBatch(
   if (Buffer.from(batchAcc.relayerEmailHash).compare(fieldToBE(BigInt(meta.relayerEmailHash))) !== 0) {
     throw new Error("email relayerEmailHash does not match batch");
   }
-  const path = await batchPath(mail.batch.toBase58(), mail.leafIndex);
+  const path = await batchPath(deps.store, mail.batch.toBase58(), mail.leafIndex);
   const selector: string = meta.selector;
   const registry = await ensureRegistry(deps, BigInt(meta.domainCommitment), selector, BigInt(meta.pubkeyHash));
 
