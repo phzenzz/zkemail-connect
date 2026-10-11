@@ -118,8 +118,10 @@ async function main() {
     await sleep(1000);
   }
 
-  // 生产代码路径:claimer(内含 registry 兜底 upsert)
-  const deps: ClaimerDeps = { connection: conn, program, programId, relayerKeypair: relayer, proverUrl: "http://localhost:8080" };
+  // 生产代码路径:claimer(内含 registry 兜底 upsert)。store 只服务批次路径,单发用空库即可。
+  const { createSqliteStore } = await import("../relayer/store/sqlite");
+  const store = createSqliteStore(path.join(ROOT, "relayer", "data", "e2e-relayer-claim.db"));
+  const deps: ClaimerDeps = { connection: conn, program, programId, relayerKeypair: relayer, proverUrl: "http://localhost:8080", store };
   const sig = await claimEscrow(deps, { emlPath: EML, escrow });
   console.log("[e2e:relayer] claim tx:", sig);
 
