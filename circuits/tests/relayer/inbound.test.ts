@@ -130,6 +130,41 @@ describe("runInbound", () => {
     expect(messageFlagsAdd).toHaveBeenCalledWith("3", ["\\Seen"], { uid: true }); // 不再重试
   });
 
+  it("does not send guidance for the relay's own mail (breaks self-notification loop)", async () => {
+    process.env.RELAYER_EMAIL = "relay@x.io";
+    try {
+      // 复刻线上循环：通知/引导信 From = relay 自身、主题非 base58 → 不得再回引导
+      const eml = Buffer.from(
+        "From: Token Airdrop <relay@x.io>\r\nSubject: You received  tokens — reply to claim\r\n\r\n");
+      const search = jest.fn<(...args: any[]) => any>()
+        .mockImplementation((q: any) => Promise.resolve(q?.all ? [] : [3]));
+      const fetchOne = jest.fn<(...args: any[]) => any>().mockResolvedValue({ source: eml });
+      const messageFlagsAdd = jest.fn<(...args: any[]) => any>();
+      const notifier = { notify: jest.fn<(...args: any[]) => any>() };
+      const client = {
+        connect: jest.fn<(...args: any[]) => any>().mockResolvedValue(undefined),
+        getMailboxLock: jest.fn<(...args: any[]) => any>().mockResolvedValue({ release: jest.fn() }),
+        fetchOne,
+        messageFlagsAdd,
+        search,
+        logout: jest.fn<(...args: any[]) => any>(),
+      };
+      const deps = {
+        connection: {} as unknown as Connection,
+        programId: Keypair.generate().publicKey,
+        notifier,
+        onClaimable: jest.fn<(...args: any[]) => any>(),
+        pollMs: 60_000,
+      };
+      void runInbound(deps, client);
+      await waitFor(() => messageFlagsAdd.mock.calls.length > 0);
+      expect(notifier.notify).not.toHaveBeenCalled(); // 自举循环在此切断
+      expect(messageFlagsAdd).toHaveBeenCalledWith("3", ["\\Seen"], { uid: true });
+    } finally {
+      delete process.env.RELAYER_EMAIL;
+    }
+  });
+
   it("startup watermark: first poll skips historical UNSEEN uids <= watermark", async () => {
     const eml = Buffer.from("From: a@b.com\r\nSubject: not-a-base58-address\r\n\r\n");
     let unseenPolls = 0;

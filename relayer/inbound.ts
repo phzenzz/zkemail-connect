@@ -76,6 +76,13 @@ async function handleOne(
   if (!parsed) return "ignored";
   const subject = parsed.subject;
   if (!DEST.test(subject)) {
+    // 自举防护：通知/引导信的 From 就是 relay 自身（测试收件人 = relay 地址时会落回
+    // 自己收件箱），再回引导会形成自己→自己的无限循环；直接忽略。真实 claim 回复
+    // （主题 = base58 地址）走 DEST 分支，不受影响。
+    if (parsed.fromEmail === (process.env.RELAYER_EMAIL ?? "").toLowerCase()) {
+      console.log(`[inbound] uid=${uid} skip relay's own mail (subject=${subject})`);
+      return "ignored";
+    }
     console.log(`[inbound] subjec=${subject} uid=${uid} subject not a base58 address, sending guidance`);
     await deps.notifier.notify(parsed.fromEmail, {
       escrow: "", sender: "", amount: "",
