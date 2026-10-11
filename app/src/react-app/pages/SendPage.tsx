@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import SentList from "@/components/SentList";
 
-type MyEscrow = { addr: PublicKey; mint: PublicKey; amount: bigint; commitment: number[] };
 type TokenOption = { mint: string; symbol: string; decimals: number; balance?: bigint };
 
 function formatTokenAmount(raw: bigint, decimals: number): string {
@@ -31,7 +31,7 @@ export default function SendPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ escrow: string; claimUrl: string } | null>(null);
-  const [mine, setMine] = useState<MyEscrow[]>([]);
+  const [sentNonce, setSentNonce] = useState(0);
   const [walletTokens, setWalletTokens] = useState<TokenOption[] | null>(null);
   const [tokensError, setTokensError] = useState<string | null>(null);
   type Mode = "single" | "batch";
@@ -117,24 +117,6 @@ export default function SendPage() {
 
   useEffect(() => { refreshTokens().catch(console.error); }, [refreshTokens]);
 
-  const refreshMine = useCallback(async () => {
-    if (!program || !publicKey || !config) return;
-    // 无 DB:全量拉取后按 sender 过滤(devnet 账户数少,MVP 可接受)
-    const all = await (program.account as any).escrow.all();
-    setMine(
-      all
-        .filter((e: any) => (e.account.sender as PublicKey).equals(publicKey))
-        .map((e: any) => ({
-          addr: e.publicKey,
-          mint: e.account.mint,
-          amount: BigInt(e.account.amount.toString()),
-          commitment: Array.from(e.account.commitment),
-        }))
-    );
-  }, [program, publicKey, config]);
-
-  useEffect(() => { refreshMine().catch(console.error); }, [refreshMine]);
-
   if (!config || !program) return null;
   // 已连接钱包：展示钱包实际持有的代币；未连接：回退到静态配置列表
   const tokenOptions: TokenOption[] = walletTokens ?? config.mints;
@@ -210,8 +192,8 @@ export default function SendPage() {
       await pollSignatureConfirmation(connection, sig);
       const claimUrl = config.claimBaseUrl + escrowPda.toBase58();
       setDone({ escrow: escrowPda.toBase58(), claimUrl });
-      await refreshMine();
       await refreshTokens();
+      setSentNonce((n) => n + 1);
     } catch (e: any) {
       const msg =
         e?.message ||
@@ -352,6 +334,7 @@ export default function SendPage() {
       });
       setProgress(null);
       await refreshTokens();
+      setSentNonce((n) => n + 1);
     } catch (e: any) {
       const msg = e?.message || e?.error?.errorMessage || e?.name || String(e);
       setError(msg);
@@ -362,8 +345,9 @@ export default function SendPage() {
   };
 
   return (
-    <div className="container mx-auto max-w-xl px-4 py-8 space-y-6">
+    <div className="container mx-auto max-w-5xl px-4 py-8">
       <h1 className="text-2xl font-bold">Send tokens to an email</h1>
+      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader>
           <CardTitle>New transfer</CardTitle>
@@ -485,23 +469,8 @@ export default function SendPage() {
           )}
         </CardContent>
       </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>My escrows</CardTitle>
-          <CardDescription>状态实时来自链上。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          {mine.length === 0 && <p className="text-muted-foreground">none yet</p>}
-          {mine.map((e) => (
-            <div key={e.addr.toBase58()} className="flex justify-between border-b pb-2">
-              <span>{(Number(e.amount) / 10 ** (mint?.decimals ?? 0)).toString()} {mint?.symbol}</span>
-              <a className="underline" href={config.claimBaseUrl + e.addr.toBase58()} target="_blank" rel="noreferrer">
-                pending → claim page
-              </a>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+      <SentList refreshNonce={sentNonce} />
+      </div>
     </div>
   );
 }
