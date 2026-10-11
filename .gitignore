@@ -10,3 +10,7 @@ circuits/testdata/emails/*.eml
 docs/superpowers/
 .manual-test/
 test-ledger/
+.env
+relayer/data/
+.env.devnet
+.env.local

@@ -7,7 +7,7 @@ import { Program } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 
 export const ROOT = path.resolve(__dirname, "../..");
-export const RPC = "http://127.0.0.1:8899";
+export const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8899"; // devnet: RPC_URL=https://api.devnet.solana.com
 export const EML = path.join(ROOT, "circuits/testdata/emails/e2e.eml");
 export const STATE_DIR = path.join(ROOT, ".manual-test");
 export const STATE_FILE = path.join(STATE_DIR, "state.json");
@@ -65,6 +65,9 @@ export function fieldToBE(s: string): Buffer {
 export interface State {
   mint?: string;
   escrow?: string;
+  batch?: string;   // 06 步创建
+  /** 06 步持久化的批次叶子承诺（hex），claim 段网络失败时可断点重跑 */
+  batchLeaves?: string[];
   meta?: Record<string, unknown>;
   /** 04 步生成的 relayer x25519 私钥（hex），供 relayer/indexer.ts 解密用。 */
   relayerX25519Secret?: string;

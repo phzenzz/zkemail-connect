@@ -8,6 +8,9 @@ skip-lint = false
 [programs.localnet]
 email_wallet = "9Bk8J1CK23pH6zB5CMNZZvNimTfGeeAaHxopNbjURfBR"
 
+[programs.devnet]
+email_wallet = "9Bk8J1CK23pH6zB5CMNZZvNimTfGeeAaHxopNbjURfBR"
+
 [provider]
 cluster = "localnet"
 wallet = "~/.config/solana/id.json"

@@ -1,5 +1,9 @@
+pub mod batch;
+pub use batch::*;
 pub mod claim;
 pub use claim::*;
+pub mod claim_batch;
+pub use claim_batch::*;
 pub mod create_escrow;
 pub use create_escrow::*;
 pub mod registry;

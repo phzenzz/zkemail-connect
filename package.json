@@ -12,13 +12,31 @@
     "prover:up": "docker compose up -d --build prover",
     "prover:down": "docker compose down",
     "e2e": "npx tsx e2e/e2e.ts",
-    "relayer:index": "npx tsx relayer/indexer.ts"
+    "e2e:relayer": "npx tsx e2e/relayer-claim.ts",
+    "relayer:index": "npx tsx relayer/indexer.ts",
+    "app:dev": "npm --prefix app run dev",
+    "app:build": "npm --prefix app run build",
+    "app:deploy": "npm --prefix app run deploy",
+    "relayer:run": "npx tsx relayer/index.ts",
+    "gmail:oauth-setup": "npx tsx relayer/scripts/gmail-oauth-setup.ts",
+    "crypto-parity": "cd app && npx tsx scripts/crypto-parity.ts",
+    "relayer": "tsx --env-file=.env relayer/index.ts",
+    "relayer:local": "tsx --env-file=.env --env-file=.env.local relayer/index.ts",
+    "relayer:devnet": "tsx --env-file=.env --env-file=.env.devnet relayer/index.ts",
+    "relayer:print-config": "tsx --env-file=.env --env-file=.env.devnet relayer/print-config.ts",
+    "relayer:print-config:local": "tsx --env-file=.env --env-file=.env.local relayer/print-config.ts"
+  },
+  "dependencies": {
+    "imapflow": "^1.7.8",
+    "nodemailer": "^6.9.16"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
+    "@types/bs58": "^4.0.4",
     "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.17",
     "tsx": "^4.19.0",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.6.0"

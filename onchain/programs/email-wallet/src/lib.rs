@@ -97,4 +97,47 @@ pub mod email_wallet {
     ) -> Result<()> {
         instructions::registry_revoke(ctx, domain_commitment, selector)
     }
+
+    pub fn create_batch(
+        ctx: Context<CreateBatch>,
+        merkle_root: [u8; 32],
+        amount_per_recipient: u64,
+        leaf_count: u32,
+        cipher_len_expected: u32,
+        expire_at: i64,
+        relayer_email_hash: [u8; 32],
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::create_batch(
+            ctx,
+            merkle_root,
+            amount_per_recipient,
+            leaf_count,
+            cipher_len_expected,
+            expire_at,
+            relayer_email_hash,
+            nonce,
+        )
+    }
+
+    pub fn append_batch_cipher(ctx: Context<AppendBatchCipher>, chunk: Vec<u8>) -> Result<()> {
+        instructions::append_batch_cipher(ctx, chunk)
+    }
+
+    pub fn seal_batch(ctx: Context<SealBatch>) -> Result<()> {
+        instructions::seal_batch(ctx)
+    }
+
+    pub fn close_batch(ctx: Context<CloseBatch>) -> Result<()> {
+        instructions::close_batch(ctx)
+    }
+
+    pub fn claim_batch(
+        ctx: Context<ClaimBatch>,
+        args: ClaimArgs,
+        merkle_siblings: Vec<[u8; 32]>,
+        merkle_indices: Vec<u8>,
+    ) -> Result<()> {
+        instructions::claim_batch(ctx, args, merkle_siblings, merkle_indices)
+    }
 }
