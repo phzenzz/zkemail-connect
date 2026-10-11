@@ -5,6 +5,26 @@ import {
   computeCommitment, computeDomainCommitment, computePubkeyHash, poseidonHash,
 } from "./poseidon";
 
+// Zscaler 等企业网关对 dns.google / cloudflare-dns.com 做 TLS 拦截（MITM），Node 不
+// 信任企业根证书 → @zk-email/helpers 经 DoH 取 DKIM 公钥必失败（fetch failed /
+// UNABLE_TO_GET_ISSUER_CERT_LOCALLY）。本进程内把这两个端点改写为直连可达的
+// doh.pub（dns-json 协议相同）；代价是丢失 Google/Cloudflare 双源交叉核对（链上
+// registry 仍锚定 pubkeyHash，语义不变）。可用 ZKEMAIL_DOH=off 关闭。
+const DOH_REWRITE: Array<[RegExp, string]> = [
+  [/^https:\/\/dns\.google\/resolve/, "https://doh.pub/resolve"],
+  [/^https:\/\/cloudflare-dns\.com\/dns-query/, "https://doh.pub/resolve"],
+];
+if (process.env.ZKEMAIL_DOH !== "off" && !(globalThis as { __zkemailDohPatched?: boolean }).__zkemailDohPatched) {
+  const origFetch = globalThis.fetch;
+  (globalThis as { __zkemailDohPatched?: boolean }).__zkemailDohPatched = true;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const rw = (u: string) => DOH_REWRITE.reduce((s, [re, to]) => s.replace(re, to), u);
+    if (typeof input === "string") return origFetch(rw(input), init);
+    if (input instanceof URL) return origFetch(new URL(rw(input.href)), init);
+    return origFetch(new Request(rw(input.url), input), init);
+  }) as typeof fetch;
+}
+
 export const MAX_HEADER_LEN = 1024;
 export const MAX_DEST_LEN = 44;
 const FRESHNESS_SECS = Number(process.env.TIMESTAMP_WINDOW_SECS ?? 30 * 24 * 3600); // 客户端 fail-fast，默认 30 天与链上 ProtocolConfig 对齐
