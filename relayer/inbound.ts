@@ -10,6 +10,7 @@ import { ImapFlow } from "imapflow";
 import bs58 from "bs58"; // @solana/web3.js 已传递依赖;若 import 失败则在根 package.json 显式加 "bs58"
 import { computeCommitment } from "../circuits/scripts/poseidon";
 import { findLeafByCommitment } from "./batch-store";
+import { RelayerStore } from "./store";
 import { gmailAuthFromEnv, GmailAuth, Notifier } from "./notify";
 
 const DEST = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -29,6 +30,7 @@ export interface InboundDeps {
   connection: Connection;
   programId: PublicKey;
   notifier: Notifier;
+  store: RelayerStore;
   onClaimable: (m: ClaimableMail) => Promise<void>;
   pollMs?: number;
 }
@@ -95,7 +97,7 @@ async function handleOne(
   let v = commitment;
   for (let i = 31; i >= 0; i--) { c32[i] = Number(v & 0xffn); v >>= 8n; }
   // 批次优先：缓存命中（且链上批次未过期/未关闭）即批次领取；否则回退单发 escrow 扫描
-  const hit = await findLeafByCommitment(Buffer.from(c32), deps.connection);
+  const hit = await findLeafByCommitment(Buffer.from(c32), deps.connection, deps.store);
   const emlPath = path.join(tmpDir, `inbound-${uid}.eml`);
   fs.writeFileSync(emlPath, raw);
   if (hit) {

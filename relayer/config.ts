@@ -18,6 +18,8 @@ export interface RelayerConfig {
   proverUrl: string;
   /** 通知邮件里的 claim 链接前缀 */
   claimBaseUrl: string;
+  /** 本地 SQLite 存储路径（notified 去重 + 批次缓存；生产目标 Cloudflare D1 另接同一 schema） */
+  sqlitePath: string;
   /** Gmail 凭证；null = 通知降级 Console、inbound 不启动（indexer 仍可用） */
   gmail: GmailAuth | null;
 }
@@ -27,6 +29,7 @@ const DEFAULTS = {
   rpcUrl: "https://api.devnet.solana.com",
   proverUrl: "http://localhost:8080",
   claimBaseUrl: "http://localhost:3000/claim/",
+  sqlitePath: path.resolve(__dirname, "data", "relayer.db"),
 } as const;
 
 function parseX25519(hex: string): Buffer {
@@ -65,6 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayerConfig 
     rpcUrl: env.RPC_URL ?? DEFAULTS.rpcUrl,
     proverUrl: env.PROVER_URL ?? DEFAULTS.proverUrl,
     claimBaseUrl: env.CLAIM_BASE_URL ?? DEFAULTS.claimBaseUrl,
+    sqlitePath: env.SQLITE_PATH ?? DEFAULTS.sqlitePath,
     gmail: gmailAuthFromEnv(env),
   };
 }
@@ -80,6 +84,7 @@ export function describeConfig(cfg: RelayerConfig): string {
     `RPC_URL              = ${cfg.rpcUrl}`,
     `PROVER_URL           = ${cfg.proverUrl}`,
     `CLAIM_BASE_URL       = ${cfg.claimBaseUrl}`,
+    `SQLITE_PATH          = ${cfg.sqlitePath}`,
     `GMAIL                = ${gmail}`,
   ].join("\n");
 }

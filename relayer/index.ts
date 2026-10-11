@@ -1,5 +1,6 @@
 // relayer 编排（组合根）：indexer(通知) + inbound(收信) → claimer(兑现)。
-// 启动第一步 loadConfig fail-fast；无 DB，状态全在链上（批次派生缓存在 relayer/data/）。
+// 启动第一步 loadConfig fail-fast；链上仍是唯一事实源，本地派生状态
+// （已通知去重 + 批次缓存）存 SQLite（SQLITE_PATH，默认 relayer/data/relayer.db）。
 // 配置经 npm script 链式 --env-file 加载（.env ← .env.devnet/.env.local，后者优先）：
 //   npm run relayer            # .env
 //   npm run relayer:local      # .env + .env.local   （本地 validator）
@@ -14,6 +15,8 @@ import { runIndexer } from "./indexer";
 import { runInboundFromEnv, InboundDeps, ClaimableMail } from "./inbound";
 import { claimBatch, claimEscrow, ClaimerDeps } from "./claimer";
 import { ConsoleNotifier, GmailNotifier, Notifier } from "./notify";
+import { createSqliteStore } from "./store/sqlite";
+import { importLegacyCaches } from "./batch-store";
 
 const ROOT = path.resolve(__dirname, "..");
 const IDL_PATH = path.join(ROOT, "onchain/target/idl/email_wallet.json");
@@ -34,6 +37,11 @@ async function supervise(name: string, run: () => Promise<void>): Promise<never>
 async function main() {
   const cfg = loadConfig();
   console.log("[relayer] config:\n" + describeConfig(cfg));
+
+  // 有状态存储：已通知去重 + 批次缓存。旧 JSON 缓存一次性导入（表空才导，幂等）。
+  const store = createSqliteStore(cfg.sqlitePath);
+  const imported = await importLegacyCaches(store);
+  if (imported > 0) console.log(`[relayer] imported ${imported} legacy batch cache(s)`);
 
   const relayerKeypair = Keypair.fromSecretKey(
     Uint8Array.from(JSON.parse(fs.readFileSync(cfg.keypairPath, "utf8"))));
@@ -58,6 +66,7 @@ async function main() {
   const claimerDeps: ClaimerDeps = {
     connection, program, programId,
     relayerKeypair, proverUrl: cfg.proverUrl,
+    store,
   };
 
   async function pump() {
@@ -76,7 +85,7 @@ async function main() {
   }
 
   const deps: InboundDeps = {
-    connection, programId, notifier,
+    connection, programId, notifier, store,
     onClaimable: async (m) => { queue.push(m); void pump(); },
   };
 
@@ -85,7 +94,7 @@ async function main() {
   void supervise("indexer", () =>
     runIndexer({
       connection, email: cfg.email, x25519Secret: cfg.x25519Secret,
-      claimBase: cfg.claimBaseUrl, notifier,
+      claimBase: cfg.claimBaseUrl, notifier, store,
     }));
 
   // inbound 需真实 Gmail 凭证；未配置时跳过（通知已降级，无回复可收）。

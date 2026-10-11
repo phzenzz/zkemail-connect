@@ -24,9 +24,12 @@
     "relayer:local": "tsx --env-file=.env --env-file=.env.local relayer/index.ts",
     "relayer:devnet": "tsx --env-file=.env --env-file=.env.devnet relayer/index.ts",
     "relayer:print-config": "tsx --env-file=.env --env-file=.env.devnet relayer/print-config.ts",
-    "relayer:print-config:local": "tsx --env-file=.env --env-file=.env.local relayer/print-config.ts"
+    "relayer:print-config:local": "tsx --env-file=.env --env-file=.env.local relayer/print-config.ts",
+    "relayer:test": "tsx --test relayer/tests/*.test.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "drizzle-orm": "^0.44.2",
     "imapflow": "^1.7.8",
     "nodemailer": "^6.9.16"
   },
@@ -34,9 +37,11 @@
     "@coral-xyz/anchor": "^0.32.1",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/bs58": "^4.0.4",
     "@types/node": "^22.0.0",
     "@types/nodemailer": "^6.4.17",
+    "drizzle-kit": "^0.28.0",
     "tsx": "^4.19.0",
     "tweetnacl": "^1.0.3",
     "typescript": "^5.6.0"
