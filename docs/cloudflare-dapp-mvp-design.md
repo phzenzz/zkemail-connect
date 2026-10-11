@@ -152,3 +152,12 @@ Relayer(本地 Node 进程,无 DB)
 | Gmail 个人账号 SMTP/IMAP 限制（每日发送上限 ~500、app password 需 2FA） | MVP 可接受；IMAP 轮询间隔 ≥30s；文档记录限制 |
 | DKIM `h=` 未签 Subject / 企业网关改写 | 电路拒绝 → 自动回信引导（PRD §6.4 兜底的 MVP 版：人工介入） |
 | 浏览器 poseidon（circomlibjs）性能 | 单次 Poseidon 计算 <1s，可接受 |
+
+## 演进：relayer 存储层（2026-10-11 增补）
+
+MVP 阶段「server 零存储」决策之上的演进（issue #10 / #11）：relayer 引入 Drizzle + SQLite 存储层（`relayer/store/`）。
+
+- 本地：better-sqlite3（`SQLITE_PATH` 可选，默认 `relayer/data/relayer.db`，已 gitignore），启动自动应用 `relayer/store/migrations/` 下的迁移。
+- 生产目标 Cloudflare D1：同一套 Drizzle schema 与迁移 SQL 可直接在 D1 执行，届时新增一个 D1 driver 实现同一 `RelayerStore` 接口（`relayer/store/sqlite.ts` 的对应物），上层（indexer/inbound/claimer）零改动。
+- 存两类派生状态：批次缓存（原 `relayer/data/batches/*.json` 已一次性导入 `batches` 表，导入幂等：表空才导）与已通知记录（`notified` 表，重启回填/事件重放不重复发信的依据，at-least-once：notify 成功后才插入）。
+- 密钥边界不变：DB 不存 x25519 私钥 / Gmail 凭证 / 钱包私钥，只存派生状态。
