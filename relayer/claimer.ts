@@ -13,6 +13,46 @@ import { batchPath } from "./batch-store";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** 创建并扩展 ALT，返回就绪的查找表账户。
+ *  devnet 公共 RPC 多节点槽位视图漂移，createLookupTable 偶发 "N is not a recent slot"
+ *  （取到 finalized 的节点比落交易的节点超前）：换槽位重试；extend 后须跨 slot 才能被引用。 */
+async function createAndExtendAlt(
+  deps: ClaimerDeps, addresses: PublicKey[], expectedLen: number
+): Promise<AddressLookupTableAccount> {
+  const wallet = new anchor.Wallet(deps.relayerKeypair);
+  const provider = new anchor.AnchorProvider(deps.connection, wallet, { commitment: "confirmed" });
+  let altAddress: PublicKey | null = null;
+  for (let attempt = 0; attempt < 3 && !altAddress; attempt++) {
+    const recentSlot = await deps.connection.getSlot("finalized");
+    const [createAltIx, addr] = AddressLookupTableProgram.createLookupTable({
+      authority: deps.relayerKeypair.publicKey, payer: deps.relayerKeypair.publicKey, recentSlot,
+    });
+    try {
+      await provider.sendAndConfirm(new Transaction().add(createAltIx), []);
+      altAddress = addr;
+    } catch (e) {
+      const msg = (e as Error)?.message ?? String(e);
+      if (msg.includes("not a recent slot") && attempt < 2) continue;
+      throw e;
+    }
+  }
+  if (!altAddress) throw new Error("address lookup table create failed after retries");
+  await provider.sendAndConfirm(new Transaction().add(
+    AddressLookupTableProgram.extendLookupTable({
+      payer: deps.relayerKeypair.publicKey, authority: deps.relayerKeypair.publicKey,
+      lookupTable: altAddress, addresses,
+    })
+  ), []);
+  const extendedSlot = await deps.connection.getSlot();
+  for (let i = 0; i < 20 && (await deps.connection.getSlot()) <= extendedSlot; i++) await sleep(400);
+  for (let i = 0; i < 10; i++) {
+    const res = await deps.connection.getAddressLookupTable(altAddress);
+    if (res.value && res.value.state.addresses.length === expectedLen) return res.value;
+    await sleep(400);
+  }
+  throw new Error("address lookup table not ready");
+}
+
 function fieldToBE(v: bigint): Buffer {
   const b = Buffer.alloc(32);
   for (let i = 31; i >= 0; i--) { b[i] = Number(v & 0xffn); v >>= 8n; }
@@ -111,34 +151,12 @@ export async function claimEscrow(
     [Buffer.from("nullifier"), fieldToBE(BigInt(meta.emailNullifier))], deps.programId)[0];
   const [protocolConfig] = PublicKey.findProgramAddressSync([Buffer.from("protocol")], deps.programId);
 
-  const recentSlot = await deps.connection.getSlot("finalized");
-  const [createAltIx, altAddress] = AddressLookupTableProgram.createLookupTable({
-    authority: deps.relayerKeypair.publicKey, payer: deps.relayerKeypair.publicKey, recentSlot,
-  });
-  const wallet = new anchor.Wallet(deps.relayerKeypair);
-  const provider = new anchor.AnchorProvider(deps.connection, wallet, { commitment: "confirmed" });
-  await provider.sendAndConfirm(new Transaction().add(createAltIx), []);
-  await provider.sendAndConfirm(new Transaction().add(
-    AddressLookupTableProgram.extendLookupTable({
-      payer: deps.relayerKeypair.publicKey, authority: deps.relayerKeypair.publicKey,
-      lookupTable: altAddress,
-      addresses: buildAltAddressList({
-        programId: deps.programId, systemProgram: anchor.web3.SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID, ataProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        mint, escrow: mail.escrow, vault, sender: new PublicKey(escrowAcc.sender),
-        registry, destOwner, destAta, nullifier, protocolConfig,
-      }),
-    })
-  ), []);
-  const extendedSlot = await deps.connection.getSlot();
-  for (let i = 0; i < 20 && (await deps.connection.getSlot()) <= extendedSlot; i++) await sleep(400);
-  let altAccount: AddressLookupTableAccount | null = null;
-  for (let i = 0; i < 10; i++) {
-    const res = await deps.connection.getAddressLookupTable(altAddress);
-    if (res.value && res.value.state.addresses.length === 13) { altAccount = res.value; break; }
-    await sleep(400);
-  }
-  if (!altAccount) throw new Error("address lookup table not ready");
+  const altAccount = await createAndExtendAlt(deps, buildAltAddressList({
+    programId: deps.programId, systemProgram: anchor.web3.SystemProgram.programId,
+    tokenProgram: TOKEN_PROGRAM_ID, ataProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+    mint, escrow: mail.escrow, vault, sender: new PublicKey(escrowAcc.sender),
+    registry, destOwner, destAta, nullifier, protocolConfig,
+  }), 13);
 
   const claimTx = await deps.program.methods
     .claim({
@@ -206,32 +224,10 @@ export async function claimBatch(
     [Buffer.from("nullifier"), fieldToBE(BigInt(meta.emailNullifier))], deps.programId)[0];
   const [protocolConfig] = PublicKey.findProgramAddressSync([Buffer.from("protocol")], deps.programId);
 
-  const recentSlot = await deps.connection.getSlot("finalized");
-  const [createAltIx, altAddress] = AddressLookupTableProgram.createLookupTable({
-    authority: deps.relayerKeypair.publicKey, payer: deps.relayerKeypair.publicKey, recentSlot,
-  });
-  const wallet = new anchor.Wallet(deps.relayerKeypair);
-  const provider = new anchor.AnchorProvider(deps.connection, wallet, { commitment: "confirmed" });
-  await provider.sendAndConfirm(new Transaction().add(createAltIx), []);
-  await provider.sendAndConfirm(new Transaction().add(
-    AddressLookupTableProgram.extendLookupTable({
-      payer: deps.relayerKeypair.publicKey, authority: deps.relayerKeypair.publicKey,
-      lookupTable: altAddress,
-      addresses: [
-        deps.programId, anchor.web3.SystemProgram.programId, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
-        mint, mail.batch, vault, registry, destOwner, destAta, nullifier, protocolConfig,
-      ],
-    })
-  ), []);
-  const extendedSlot = await deps.connection.getSlot();
-  for (let i = 0; i < 20 && (await deps.connection.getSlot()) <= extendedSlot; i++) await sleep(400);
-  let altAccount: AddressLookupTableAccount | null = null;
-  for (let i = 0; i < 10; i++) {
-    const res = await deps.connection.getAddressLookupTable(altAddress);
-    if (res.value && res.value.state.addresses.length === 12) { altAccount = res.value; break; }
-    await sleep(400);
-  }
-  if (!altAccount) throw new Error("address lookup table not ready");
+  const altAccount = await createAndExtendAlt(deps, [
+    deps.programId, anchor.web3.SystemProgram.programId, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
+    mint, mail.batch, vault, registry, destOwner, destAta, nullifier, protocolConfig,
+  ], 12);
 
   const tx = await deps.program.methods
     .claimBatch({

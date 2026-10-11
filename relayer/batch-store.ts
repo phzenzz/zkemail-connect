@@ -62,11 +62,20 @@ export function removeCache(batch: string): void {
   if (fs.existsSync(p)) fs.unlinkSync(p);
 }
 
-/** 链上批次是否仍可领取：账户已关闭（领完/过期退款）或超过 expire_at 视为不可领。 */
+/** 链上批次是否仍可领取：账户已关闭（领完/过期退款）或超过 expire_at 视为不可领。
+ *  布局校验：issue #9 起 Batch 含 nonce(u64)，账户长度须恰好等于新布局公式；旧程序
+ *  残留的 legacy 批次短 8 字节，anchor 用新 IDL 解码会 RangeError，一律视为不可领，
+ *  findLeafByCommitment 会跳过它继续匹配新批次。 */
 export async function batchLive(connection: Connection, batch: string): Promise<boolean> {
   const info = await connection.getAccountInfo(new PublicKey(batch));
   if (!info) return false;
-  return Number(info.data.readBigInt64LE(BATCH_EXPIRE_AT_OFFSET)) * 1000 > Date.now();
+  const d = info.data;
+  if (d.length < BATCH_EXPIRE_AT_OFFSET + 8) return false;
+  const leafCount = d.readUInt32LE(152);
+  const cipherLen = d.readUInt32LE(160);
+  const expected = 182 + 4 + Math.ceil(leafCount / 8) + 4 + cipherLen;
+  if (d.length !== expected) return false;
+  return Number(d.readBigInt64LE(BATCH_EXPIRE_AT_OFFSET)) * 1000 > Date.now();
 }
 
 /** 在缓存中按 commitment 找叶子（重建树后比对叶子哈希）。
