@@ -5,6 +5,31 @@ import path from "path";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { buildBatchTree, merklePath } from "../circuits/scripts/merkle";
 import { computeCommitment } from "../circuits/scripts/poseidon";
+import { RelayerStore } from "./store";
+
+/** 旧 JSON 缓存目录（导出供测试注入临时目录）。 */
+export const LEGACY_DIR = path.resolve(__dirname, "data", "batches");
+
+/** 一次性导入：表空且 JSON 缓存存在时导入；返回导入条数。重复启动安全（表非空即跳过）。 */
+export async function importLegacyCaches(store: RelayerStore, dir: string = LEGACY_DIR): Promise<number> {
+  if ((await store.listBatches()).length > 0) return 0;
+  if (!fs.existsSync(dir)) return 0;
+  let imported = 0;
+  for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+    try {
+      const c = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as BatchCache;
+      if (!c || typeof c.batch !== "string" || typeof c.root !== "string" || !Array.isArray(c.emails)) {
+        throw new Error("bad shape");
+      }
+      await store.saveBatch(c);
+      imported++;
+    } catch (err) {
+      console.warn(`[batch-store] skipping corrupt cache file ${f}:`, (err as Error)?.message ?? err);
+    }
+  }
+  if (imported > 0) console.log(`[batch-store] imported ${imported} legacy batch cache(s) from ${dir}`);
+  return imported;
+}
 
 export interface BatchCache {
   batch: string;   // base58
