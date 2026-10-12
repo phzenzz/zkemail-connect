@@ -52,8 +52,10 @@ async function main() {
     console.log("[relayer] 未配置 Gmail 凭证：通知降级 ConsoleNotifier，inbound 不启动");
   }
 
-  // claim 队列：inbound 收到合法回复即入队，逐个兑现（串行，prover 本身串行）
-  const queue: ClaimableMail[] = [];
+  // claim 队列：inbound 收到合法回复即入队，逐个兑现（串行，prover 本身串行）。
+  // 入队即 \Seen，失败只能靠这里重试：退避重排 3 次后丢弃并告警（inbound 头注释的
+  // "抛错保持 UNSEEN 下轮重试"不覆盖队列异步失败——邮件在入队时已标 \Seen）。
+  const queue: { mail: ClaimableMail; attempts: number }[] = [];
   let working = false;
   const claimerDeps: ClaimerDeps = {
     connection, program, programId,
@@ -64,12 +66,22 @@ async function main() {
     if (working) return;
     working = true;
     while (queue.length > 0) {
-      const mail = queue.shift()!;
+      const item = queue.shift()!;
+      const mail = item.mail;
+      const label = (mail.batch ?? mail.escrow).toBase58();
       try {
         if (mail.batch) await claimBatch(claimerDeps, { emlPath: mail.emlPath, batch: mail.batch, leafIndex: mail.leafIndex! });
         else await claimEscrow(claimerDeps, mail);
       } catch (e) {
-        console.error(`[relayer] claim failed for ${(mail.batch ?? mail.escrow).toBase58()}:`, (e as Error)?.message ?? e);
+        console.error(`[relayer] claim failed for ${label}:`, (e as Error)?.message ?? e);
+        if (item.attempts < 3) {
+          item.attempts++;
+          const delayMs = 60_000 * item.attempts;
+          setTimeout(() => { queue.push(item); void pump(); }, delayMs);
+          console.log(`[relayer] requeue ${label} in ${delayMs / 1000}s (attempt ${item.attempts}/3)`);
+        } else {
+          console.error(`[relayer] claim abandoned for ${label} after 3 retries — 需人工处理`);
+        }
       }
     }
     working = false;
@@ -77,7 +89,7 @@ async function main() {
 
   const deps: InboundDeps = {
     connection, programId, notifier,
-    onClaimable: async (m) => { queue.push(m); void pump(); },
+    onClaimable: async (m) => { queue.push({ mail: m, attempts: 0 }); void pump(); },
   };
 
   // indexer 长期驻留。监督重启：与 inbound 同理——ws/RPC/SMTP 的瞬时故障

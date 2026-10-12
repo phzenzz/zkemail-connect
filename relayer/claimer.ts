@@ -23,7 +23,10 @@ async function createAndExtendAlt(
   const provider = new anchor.AnchorProvider(deps.connection, wallet, { commitment: "confirmed" });
   let altAddress: PublicKey | null = null;
   for (let attempt = 0; attempt < 3 && !altAddress; attempt++) {
-    const recentSlot = await deps.connection.getSlot("finalized");
+    // finalized 槽位减 32（devnet ≈13s）：公共 RPC 多节点视图漂移，落交易节点的 bank 可能
+    // 滞后于返回 finalized 的节点，recentSlot 太"新"会被程序判 "not a recent slot"；
+    // 留余量后处理节点只要落后不超过 32 slot 即可接受（程序窗口 512 slot），叠加重试基本消除偶发。
+    const recentSlot = (await deps.connection.getSlot("finalized")) - 32;
     const [createAltIx, addr] = AddressLookupTableProgram.createLookupTable({
       authority: deps.relayerKeypair.publicKey, payer: deps.relayerKeypair.publicKey, recentSlot,
     });
@@ -183,7 +186,10 @@ export async function claimEscrow(
     try {
       sig = await deps.connection.sendRawTransaction(vtx.serialize());
       await deps.connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-    } catch { sig = ""; }
+    } catch (e) {
+      console.error(`[claimer] claim send attempt ${attempt + 1}/3 failed:`, (e as Error)?.message ?? e);
+      sig = "";
+    }
   }
   if (!sig) throw new Error("claim tx failed to land after 3 attempts");
   console.log(`[claimer] claimed ${mail.escrow.toBase58()} → ${meta.destBase58} tx=${sig}`);
@@ -254,7 +260,10 @@ export async function claimBatch(
     try {
       sig = await deps.connection.sendRawTransaction(vtx.serialize());
       await deps.connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-    } catch { sig = ""; }
+    } catch (e) {
+      console.error(`[claimer] claim_batch send attempt ${attempt + 1}/3 failed:`, (e as Error)?.message ?? e);
+      sig = "";
+    }
   }
   if (!sig) throw new Error("claim_batch tx failed to land after 3 attempts");
   console.log(`[claimer] batch ${mail.batch.toBase58()} leaf ${mail.leafIndex} → ${meta.destBase58} tx=${sig}`);
