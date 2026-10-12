@@ -5,9 +5,9 @@ import { LAUNCH_APP } from "./site";
 
 export default function Home() {
   return (
-    <section className="relative overflow-hidden">
+    <section className="relative flex min-h-[calc(100vh-3.5rem)] items-center overflow-hidden">
       <FlowBackground />
-      <div className="relative mx-auto max-w-6xl px-6 py-20 text-center md:py-28">
+      <div className="relative mx-auto w-full max-w-6xl px-6 py-20 text-center md:py-28">
         <h1 className="mx-auto max-w-3xl text-5xl font-bold tracking-tight md:text-6xl">
           Send crypto to any email address
         </h1>
