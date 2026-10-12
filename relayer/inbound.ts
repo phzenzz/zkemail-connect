@@ -13,7 +13,7 @@ import { findLeafByCommitment } from "./batch-store";
 import { gmailAuthFromEnv, GmailAuth, Notifier } from "./notify";
 
 const DEST = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-export const ESCROW_SIZE = 286;
+export const ESCROW_SIZE = 294; // state::Escrow 含 nonce（旧 286 布局已无法 claim，不匹配）
 export const COMMITMENT_OFFSET = 8;
 
 export interface ClaimableMail {
@@ -47,7 +47,7 @@ export function extractFromAndSubject(raw: Buffer): { fromEmail: string; subject
   return { fromEmail: email, subject: subjectMatch[1].trim() };
 }
 
-/** 按 commitment 找开放托管:dataSize=286 + memcmp(offset 8)。同一邮箱多笔时取第一个(最早)。 */
+/** 按 commitment 找开放托管:dataSize=294(含 nonce 的新布局) + memcmp(offset 8)。同一邮箱多笔时取第一个(最早)。 */
 export async function findOpenEscrow(
   connection: Connection, programId: PublicKey, commitment32: Uint8Array
 ): Promise<PublicKey | null> {

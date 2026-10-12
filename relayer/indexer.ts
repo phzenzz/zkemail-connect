@@ -13,9 +13,12 @@ import { Notifier } from "./notify";
 const ROOT = path.resolve(__dirname, "..");
 const IDL_PATH = path.join(ROOT, "onchain/target/idl/email_wallet.json");
 
-// 与链上 state::Escrow 布局一致：8 discriminator + 32 commitment + 32 sender + 32 mint
-// + 8 amount + 32 relayer_email_hash + 4 vec len + 137 cipher + 1 bump = 286
-const ESCROW_SIZE = 286;
+// 与链上 state::Escrow 布局一致（nonce 追加在尾部，前段偏移不变）：
+// 8 discriminator + 32 commitment + 32 sender + 32 mint + 8 amount
+// + 32 relayer_email_hash + 4 vec len + 137 cipher + 1 bump + 8 nonce = 294。
+// 只索引 294：升级前的旧布局 286 托管在新程序下已无法 claim（claim seeds 含 nonce），
+// 再通知只会把收件人指向领不了的链接。
+const ESCROW_SIZE = 294;
 const COMMITMENT_OFFSET = 8; // discriminator 之后
 const SENDER_OFFSET = 40; // 8 + 32 commitment
 const MINT_OFFSET = 72; // SENDER_OFFSET + 32
