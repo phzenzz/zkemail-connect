@@ -8,13 +8,13 @@ use crate::events::EscrowCreated;
 use crate::state::{Escrow, ProtocolConfig, RelayerEntry, MAX_CIPHER_LEN};
 
 #[derive(Accounts)]
-#[instruction(commitment: [u8; 32], amount: u64, email_cipher: Vec<u8>, relayer_email_hash: [u8; 32])]
+#[instruction(commitment: [u8; 32], amount: u64, email_cipher: Vec<u8>, relayer_email_hash: [u8; 32], nonce: u64)]
 pub struct CreateEscrow<'info> {
     #[account(
         init,
         payer = sender,
         space = Escrow::SIZE,
-        seeds = [b"escrow", commitment.as_ref(), sender.key().as_ref()],
+        seeds = [b"escrow", commitment.as_ref(), sender.key().as_ref(), nonce.to_le_bytes().as_ref()],
         bump,
     )]
     pub escrow: Account<'info, Escrow>,
@@ -63,6 +63,7 @@ pub fn create_escrow(
     amount: u64,
     email_cipher: Vec<u8>,
     relayer_email_hash: [u8; 32],
+    nonce: u64,
 ) -> Result<()> {
     require!(amount > 0, ErrorCode::InvalidAmount);
     require!(
@@ -94,6 +95,7 @@ pub fn create_escrow(
     escrow.relayer_email_hash = relayer_email_hash;
     escrow.email_cipher = email_cipher;
     escrow.bump = ctx.bumps.escrow;
+    escrow.nonce = nonce;
 
     token::transfer(
         CpiContext::new(

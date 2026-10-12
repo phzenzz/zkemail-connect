@@ -26,7 +26,7 @@ pub struct Claim<'info> {
     #[account(
         mut,
         close = sender,
-        seeds = [b"escrow", escrow.commitment.as_ref(), escrow.sender.as_ref()],
+        seeds = [b"escrow", escrow.commitment.as_ref(), escrow.sender.as_ref(), escrow.nonce.to_le_bytes().as_ref()],
         bump = escrow.bump,
     )]
     pub escrow: Account<'info, Escrow>,
@@ -127,10 +127,12 @@ pub fn claim(ctx: Context<Claim>, args: ClaimArgs) -> Result<()> {
     require!(pi.relayer_email_hash == escrow.relayer_email_hash, ErrorCode::RelayerEmailHashMismatch);
 
     // 7. transfer everything out of the vault, then close it; escrow closed by `close = sender`
+    let nonce_bytes = escrow.nonce.to_le_bytes();
     let seeds: &[&[u8]] = &[
         b"escrow",
         escrow.commitment.as_ref(),
         escrow.sender.as_ref(),
+        nonce_bytes.as_ref(),
         &[escrow.bump],
     ];
     let signer = &[seeds];

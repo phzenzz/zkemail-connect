@@ -13,6 +13,7 @@ import {
   program,
   provider,
   escrowPda,
+  randomEscrowNonce,
   ata,
   fundSender,
   fieldToBE,
@@ -82,14 +83,15 @@ describe("create_escrow", () => {
   });
 
   it("creates escrow with cipher + relayer hash and pays protocol fee", async () => {
-    const escrow = escrowPda(commitment, sender.publicKey);
+    const nonce = randomEscrowNonce();
+    const escrow = escrowPda(commitment, sender.publicKey, nonce);
     const cipher = randomBytes(100);
     const before = await provider.connection.getBalance(treasury.publicKey);
     let seen: any = null;
     const sub = program.addEventListener("escrowCreated", (e: any) => { seen = e; });
     await program.methods
       .createEscrow(Array.from(commitment), new anchor.BN(500_000),
-        cipher, Array.from(relayerHash))
+        cipher, Array.from(relayerHash), nonce)
       .accounts({
         escrow,
         mint,
@@ -109,6 +111,7 @@ describe("create_escrow", () => {
     assert.equal(acc.amount.toNumber(), 500_000);
     assert.deepEqual([...acc.relayerEmailHash], [...relayerHash]);
     assert.deepEqual([...acc.emailCipher], [...cipher]);
+    assert.isTrue(acc.nonce.eq(nonce));
     const after = await provider.connection.getBalance(treasury.publicKey);
     assert.equal(after - before, 10_000_000); // 手续费精确到账
     assert.ok(seen);
@@ -120,11 +123,12 @@ describe("create_escrow", () => {
 
   it("rejects zero amount", async () => {
     const otherCommitment = randomFieldCommitment();
-    const escrow = escrowPda(otherCommitment, sender.publicKey);
+    const nonce = randomEscrowNonce();
+    const escrow = escrowPda(otherCommitment, sender.publicKey, nonce);
     await expect(
       program.methods
         .createEscrow(Array.from(otherCommitment), new anchor.BN(0),
-          randomBytes(60), Array.from(relayerHash))
+          randomBytes(60), Array.from(relayerHash), nonce)
         .accounts({
           escrow,
           mint,
@@ -148,11 +152,12 @@ describe("create_escrow", () => {
       "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
       "hex"
     );
-    const escrow = escrowPda(fr, sender.publicKey);
+    const nonce = randomEscrowNonce();
+    const escrow = escrowPda(fr, sender.publicKey, nonce);
     await expect(
       program.methods
         .createEscrow(Array.from(fr), new anchor.BN(1000),
-          randomBytes(60), Array.from(relayerHash))
+          randomBytes(60), Array.from(relayerHash), nonce)
         .accounts({
           escrow,
           mint,
@@ -169,13 +174,14 @@ describe("create_escrow", () => {
     ).to.be.rejectedWith(/InvalidCommitment/);
   });
 
-  it("same (commitment, sender) cannot be created twice", async () => {
+  it("same (commitment, sender, nonce) cannot be created twice; a fresh nonce succeeds", async () => {
     const otherCommitment = randomFieldCommitment();
-    const escrow = escrowPda(otherCommitment, sender.publicKey);
+    const nonce = randomEscrowNonce();
+    const escrow = escrowPda(otherCommitment, sender.publicKey, nonce);
     const mk = () =>
       program.methods
         .createEscrow(Array.from(otherCommitment), new anchor.BN(1000),
-          randomBytes(60), Array.from(relayerHash))
+          randomBytes(60), Array.from(relayerHash), nonce)
         .accounts({
           escrow,
           mint,
@@ -190,7 +196,29 @@ describe("create_escrow", () => {
         .signers([sender])
         .rpc();
     await mk();
-    await expect(mk()).to.be.rejected; // PDA already initialized
+    await expect(mk()).to.be.rejected; // 同 nonce：PDA already initialized
+    // issue #9 回归：同一 (commitment, sender) 换 nonce 可重复发送
+    const nonce2 = randomEscrowNonce();
+    const escrow2 = escrowPda(otherCommitment, sender.publicKey, nonce2);
+    await program.methods
+      .createEscrow(Array.from(otherCommitment), new anchor.BN(1000),
+        randomBytes(60), Array.from(relayerHash), nonce2)
+      .accounts({
+        escrow: escrow2,
+        mint,
+        vault: ata(mint, escrow2),
+        senderAta,
+        sender: sender.publicKey,
+        config: protocolConfigPda(),
+        treasury: treasury.publicKey,
+        relayerEntry: relayerEntryPda(relayerHash),
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([sender])
+      .rpc();
+    const acc = await program.account.escrow.fetch(escrow2);
+    assert.equal(acc.amount.toNumber(), 1000);
+    assert.isTrue(acc.nonce.eq(nonce2));
   });
 
   it("different sender creates independent escrow for same commitment", async () => {
@@ -213,7 +241,7 @@ describe("create_escrow", () => {
     const escrow2 = escrowPda(commitment, sender2.publicKey);
     await program.methods
       .createEscrow(Array.from(commitment), new anchor.BN(7),
-        randomBytes(60), Array.from(relayerHash))
+        randomBytes(60), Array.from(relayerHash), new anchor.BN(0))
       .accounts({
         escrow: escrow2,
         mint,
@@ -243,7 +271,7 @@ describe("create_escrow", () => {
       .signers([sender]).rpc();
     const c = randomFieldCommitment();
     await expect(program.methods
-      .createEscrow(Array.from(c), new anchor.BN(1), randomBytes(60), Array.from(h))
+      .createEscrow(Array.from(c), new anchor.BN(1), randomBytes(60), Array.from(h), new anchor.BN(0))
       .accounts({
         escrow: escrowPda(c, sender.publicKey), mint,
         vault: ata(mint, escrowPda(c, sender.publicKey)), senderAta,
@@ -257,7 +285,7 @@ describe("create_escrow", () => {
   it("rejects oversize cipher (>137B)", async () => {
     const c = randomFieldCommitment();
     await expect(program.methods
-      .createEscrow(Array.from(c), new anchor.BN(1), randomBytes(138), Array.from(relayerHash))
+      .createEscrow(Array.from(c), new anchor.BN(1), randomBytes(138), Array.from(relayerHash), new anchor.BN(0))
       .accounts({
         escrow: escrowPda(c, sender.publicKey), mint,
         vault: ata(mint, escrowPda(c, sender.publicKey)), senderAta,
@@ -272,7 +300,7 @@ describe("create_escrow", () => {
     const c = randomFieldCommitment();
     const h = randomBytes(32);
     await expect(program.methods
-      .createEscrow(Array.from(c), new anchor.BN(1), randomBytes(60), Array.from(h))
+      .createEscrow(Array.from(c), new anchor.BN(1), randomBytes(60), Array.from(h), new anchor.BN(0))
       .accounts({
         escrow: escrowPda(c, sender.publicKey), mint,
         vault: ata(mint, escrowPda(c, sender.publicKey)), senderAta,

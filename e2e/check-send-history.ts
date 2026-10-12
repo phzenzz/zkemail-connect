@@ -76,10 +76,11 @@ async function main() {
   // 1) 单发 escrow
   const commitment = Buffer.alloc(32);
   commitment[31] = 42; // 小于 FR_MODULUS 即可，create 只校验范围
+  const escrowNonce = new anchor.BN(randomBytes(8).toString("hex"), 16);
   const [escrowPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer()], programId);
+    [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer(), escrowNonce.toArrayLike(Buffer, "le", 8)], programId);
   await program.methods.createEscrow(
-    Array.from(commitment), new anchor.BN(AMOUNT.toString()), Buffer.from("cipher-stub"), Array.from(RELAYER_HASH),
+    Array.from(commitment), new anchor.BN(AMOUNT.toString()), Buffer.from("cipher-stub"), Array.from(RELAYER_HASH), escrowNonce,
   ).accounts({
     escrow: escrowPda,
     vault: getAssociatedTokenAddressSync(mint, escrowPda, true),

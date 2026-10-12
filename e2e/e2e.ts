@@ -20,6 +20,7 @@ import {
 } from "@solana/spl-token";
 import fs from "fs";
 import path from "path";
+import { randomBytes } from "crypto";
 
 const ROOT = path.resolve(__dirname, "..");
 const RPC = "http://127.0.0.1:8899";
@@ -117,8 +118,9 @@ async function main() {
   const mint = await createMint(conn, sender, sender.publicKey, null, 6);
   const senderAta = await createAccount(conn, sender, mint, sender.publicKey);
   await mintTo(conn, sender, mint, senderAta, sender, MINT_SUPPLY);
+  const escrowNonce = new anchor.BN(randomBytes(8).toString("hex"), 16);
   const escrow = PublicKey.findProgramAddressSync(
-    [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer()], programId)[0];
+    [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer(), escrowNonce.toArrayLike(Buffer, "le", 8)], programId)[0];
   const ata = (m: PublicKey, o: PublicKey) => anchor.utils.token.associatedAddress({ mint: m, owner: o });
 
   // 2.5 启动 relayer 索引器：必须先于 createEscrow 就绪，否则错过 escrowCreated 事件
@@ -149,7 +151,7 @@ async function main() {
   const treasuryBefore = await conn.getBalance(treasury.publicKey);
   await program.methods.createEscrow(
       Array.from(commitment), new anchor.BN(AMOUNT),
-      cipher, Array.from(relayerHash))
+      cipher, Array.from(relayerHash), escrowNonce)
     .accounts({
       escrow, mint, vault: ata(mint, escrow), senderAta, sender: sender.publicKey,
       config: protocolConfig, treasury: treasury.publicKey, relayerEntry,

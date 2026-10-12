@@ -21,9 +21,11 @@ pub struct Escrow {
     pub relayer_email_hash: [u8; 32],
     pub email_cipher: Vec<u8>,
     pub bump: u8,
+    /// PDA 种子随机因子：同一 (commitment, sender) 可重复发送（与 Batch.nonce 同语义，issue #9）
+    pub nonce: u64,
 }
 impl Escrow {
-    pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 32 + 4 + MAX_CIPHER_LEN + 1;
+    pub const SIZE: usize = 8 + 32 + 32 + 32 + 8 + 32 + 4 + MAX_CIPHER_LEN + 1 + 8;
 }
 
 #[account]
