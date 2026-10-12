@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { Navigate, useLocation } from "@tanstack/react-router";
+import { useLocation, useRouter } from "@tanstack/react-router";
 
 export type AuthUser = { sub: string; email: string; name: string; picture: string | null };
 export type AuthMode = "google" | "dev-bypass" | "unconfigured";
@@ -66,15 +66,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function RequireAuth({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const location = useLocation();
+  const router = useRouter();
 
-  if (auth.status === "loading") {
+  // 用 effect 做重定向而不是 <Navigate>：Navigate 内部以 props 引用判重，
+  // 每次渲染 props 都是新对象，会重复 navigate；而每次提交又会触发本组件
+  // 重渲染，形成无限导航循环把主线程卡死（仅匿名访问 /app/* 时触发）。
+  // effect 依赖是原始值，状态不变时只会跳转一次。
+  const status = auth.status;
+  const pathname = location.pathname;
+  useEffect(() => {
+    if (status === "anon") {
+      void router.navigate({ to: "/login", search: { next: pathname }, replace: true });
+    }
+  }, [status, pathname, router]);
+
+  if (status === "loading") {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Loading…</div>
     );
   }
-  if (auth.status === "anon") {
-    // /app/* 下没有查询参数，pathname 足够；带 search 需用 location.searchStr
-    return <Navigate to="/login" search={{ next: location.pathname }} replace />;
+  if (status === "anon") {
+    // 跳转由上面的 effect 执行；这里渲染占位避免闪烁
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Loading…</div>
+    );
   }
   return <>{children}</>;
 }
