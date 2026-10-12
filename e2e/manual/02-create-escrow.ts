@@ -4,6 +4,7 @@ import nacl from "tweetnacl";
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 import { createMint, createAccount, mintTo, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { randomBytes } from "crypto";
 import {
   AMOUNT, ata, conn, fieldToBE, loadKeypair, loadProgram, loadState,
   programId, relayerEmailFromState, saveState,
@@ -50,9 +51,10 @@ async function main() {
   const cipher = sealEmailForRelayer(RECIPIENT_EMAIL, x25519.publicKey);
   console.log(`[02] email cipher length=${cipher.length} (relayer=${relayerEmail})`);
 
+  const escrowNonce = new anchor.BN(randomBytes(8).toString("hex"), 16);
   const escrow = PublicKey.findProgramAddressSync(
-    [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer()], programId())[0];
-  await program.methods.createEscrow(Array.from(commitment), new anchor.BN(AMOUNT), cipher, Array.from(relayerHash))
+    [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer(), escrowNonce.toArrayLike(Buffer, "le", 8)], programId())[0];
+  await program.methods.createEscrow(Array.from(commitment), new anchor.BN(AMOUNT), cipher, Array.from(relayerHash), escrowNonce)
     .accounts({
       escrow, mint, vault: ata(mint, escrow), senderAta, sender: sender.publicKey,
       config: protocolConfig, treasury: cfg.treasury, relayerEntry,

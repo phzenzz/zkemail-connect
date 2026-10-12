@@ -21,11 +21,15 @@ export const program = anchor.workspace.EmailWallet as Program<EmailWallet>;
 export const provider = anchor.AnchorProvider.env();
 anchor.setProvider(provider);
 
-export function escrowPda(commitment: Buffer, sender: PublicKey) {
+export function escrowPda(commitment: Buffer, sender: PublicKey, nonce: anchor.BN = new anchor.BN(0)) {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("escrow"), commitment, sender.toBuffer()],
+    [Buffer.from("escrow"), commitment, sender.toBuffer(), nonce.toArrayLike(Buffer, "le", 8)],
     program.programId
   )[0];
+}
+/** 随机 u64 nonce（与客户端 randomNonce 同款）；显式传 0 可复现旧派生地址 */
+export function randomEscrowNonce(): anchor.BN {
+  return new anchor.BN(randomBytes(8).toString("hex"), 16);
 }
 export function inboxPda(commitment: Buffer) {
   return PublicKey.findProgramAddressSync(

@@ -141,10 +141,26 @@ export default function SendPage() {
       const commitmentBytes = fieldToBE32(commitment);
       const cipher = sealEmailForRelayer(trimmed, config.relayX25519Pk);
       const relayerEmailHash = fieldToBE32(await computeCommitment(config.relayEmail));
-      const [escrowPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("escrow"), Buffer.from(commitmentBytes), publicKey.toBuffer()],
-        config.programId
-      );
+      // issue #9 同款：escrow PDA = ["escrow", commitment, sender, nonce]，nonce 随机 →
+      // 同一收件人可重复发送。地址被占（~1/2^64 碰撞）换新 nonce 重试。
+      const nonceSeed = (n: BN) => n.toArrayLike(Buffer, "le", 8); // 与 Rust nonce.to_le_bytes() 一致
+      const randomNonce = () => {
+        const b = new Uint8Array(8);
+        globalThis.crypto.getRandomValues(b);
+        return new BN(Buffer.from(b).toString("hex"), 16);
+      };
+      let nonce: BN | null = null;
+      let escrowPda: PublicKey | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const candidate = randomNonce();
+        const candidatePda = PublicKey.findProgramAddressSync(
+          [Buffer.from("escrow"), Buffer.from(commitmentBytes), publicKey.toBuffer(), nonceSeed(candidate)],
+          config.programId
+        )[0];
+        const occupied = await (program.account as any).escrow.fetchNullable(candidatePda);
+        if (!occupied) { nonce = candidate; escrowPda = candidatePda; break; }
+      }
+      if (!nonce || !escrowPda) throw new Error("托管地址反复被占用，请重试");
       const [protocolPda] = PublicKey.findProgramAddressSync([Buffer.from("protocol")], config.programId);
       const [relayerEntryPda] = PublicKey.findProgramAddressSync(
         [Buffer.from("relayer"), Buffer.from(relayerEmailHash)],
@@ -166,6 +182,7 @@ export default function SendPage() {
           // Anchor `bytes` 在浏览器里必须是 Buffer；Array.from 会触发 Blob.encode 报错
           Buffer.from(cipher),
           Array.from(relayerEmailHash),
+          nonce,
         )
         .accounts({
           escrow: escrowPda,

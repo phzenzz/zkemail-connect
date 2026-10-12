@@ -9,6 +9,7 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { createMint, createAccount, mintTo, getAccount, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import fs from "fs";
 import path from "path";
+import { randomBytes } from "crypto";
 import nacl from "tweetnacl";
 import { sealEmailForRelayer } from "../relayer/crypto";
 import { claimEscrow, ClaimerDeps } from "../relayer/claimer";
@@ -100,11 +101,12 @@ async function main() {
   const mint = await createMint(conn, sender, sender.publicKey, null, 6);
   const senderAta = await createAccount(conn, sender, mint, sender.publicKey);
   await mintTo(conn, sender, mint, senderAta, sender, 1_000_000_000);
+  const escrowNonce = new anchor.BN(randomBytes(8).toString("hex"), 16);
   const escrow = PublicKey.findProgramAddressSync(
-    [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer()], programId)[0];
+    [Buffer.from("escrow"), commitment, sender.publicKey.toBuffer(), escrowNonce.toArrayLike(Buffer, "le", 8)], programId)[0];
   const ata = (m: PublicKey, o: PublicKey) => anchor.utils.token.associatedAddress({ mint: m, owner: o });
   const cipher = sealEmailForRelayer(email.meta.fromEmail, relayerX25519.publicKey);
-  await program.methods.createEscrow(Array.from(commitment), new anchor.BN(AMOUNT), cipher, Array.from(relayerHash))
+  await program.methods.createEscrow(Array.from(commitment), new anchor.BN(AMOUNT), cipher, Array.from(relayerHash), escrowNonce)
     .accounts({ escrow, mint, vault: ata(mint, escrow), senderAta, sender: sender.publicKey,
       config: protocolConfig, treasury: treasury.publicKey, relayerEntry,
       tokenProgram: TOKEN_PROGRAM_ID })

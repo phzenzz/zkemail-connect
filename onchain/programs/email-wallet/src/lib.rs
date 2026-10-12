@@ -21,8 +21,9 @@ pub mod email_wallet {
         amount: u64,
         email_cipher: Vec<u8>,
         relayer_email_hash: [u8; 32],
+        nonce: u64,
     ) -> Result<()> {
-        instructions::create_escrow(ctx, commitment, amount, email_cipher, relayer_email_hash)
+        instructions::create_escrow(ctx, commitment, amount, email_cipher, relayer_email_hash, nonce)
     }
 
     pub fn initialize_protocol(

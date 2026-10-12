@@ -144,7 +144,8 @@ describe("claim", () => {
         Array.from(commitment()),
         new anchor.BN(AMOUNT),
         randomBytes(60),
-        Array.from(relayerHash)
+        Array.from(relayerHash),
+        new anchor.BN(0)
       )
       .accounts({
         escrow: escrowPda(commitment(), sender.publicKey),
@@ -251,7 +252,8 @@ describe("claim", () => {
         Array.from(commitment()),
         new anchor.BN(AMOUNT),
         randomBytes(60),
-        Array.from(otherHash)
+        Array.from(otherHash),
+        new anchor.BN(0)
       )
       .accounts({
         escrow: escrow2,
@@ -311,7 +313,8 @@ describe("claim", () => {
         Array.from(commitment()),
         new anchor.BN(AMOUNT),
         randomBytes(60),
-        Array.from(relayerHash)
+        Array.from(relayerHash),
+        new anchor.BN(0)
       )
       .accounts({
         escrow: escrowPda(commitment(), sender.publicKey),
