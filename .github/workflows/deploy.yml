@@ -1,0 +1,60 @@
+name: Deploy to Cloudflare Workers
+
+# PR 合入 main 会产生一次 push 到 main，即自动部署时机
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy.yml"
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & deploy app
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # wrangler.json 里的 SESSIONS KV id 是本地 dev 占位值（见 docs/app-auth-setup.md），
+      # 部署前用生产 namespace id 替换
+      - name: Inject production KV namespace id
+        env:
+          SESSIONS_KV_ID: ${{ secrets.SESSIONS_KV_ID }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const PLACEHOLDER = '00000000000000000000000000000000';
+            const cfg = fs.readFileSync('wrangler.json', 'utf8');
+            if (!cfg.includes(PLACEHOLDER)) {
+              console.error('wrangler.json 中未找到占位 KV id，请检查配置是否已改为其它写法');
+              process.exit(1);
+            }
+            fs.writeFileSync('wrangler.json', cfg.replace(PLACEHOLDER, process.env.SESSIONS_KV_ID));
+          "
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: app
+          command: deploy
