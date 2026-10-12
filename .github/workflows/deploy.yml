@@ -1,12 +1,14 @@
 name: Deploy to Cloudflare Workers
 
-# PR 合入 main 会产生一次 push 到 main，即自动部署时机
+# PR 合入 main 会产生一次 push 到 main，即自动部署时机；
+# workflow_dispatch 用于手动触发（如面板改了 vars 后需要重新部署生效）
 on:
   push:
     branches: [main]
     paths:
       - "app/**"
       - ".github/workflows/deploy.yml"
+  workflow_dispatch:
 
 concurrency:
   group: production-deploy
