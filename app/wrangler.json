@@ -26,10 +26,23 @@
 
 	/**
 	 * 会话存储。id 是占位值，本地 dev 由 miniflare 模拟、无需真实 namespace；
-	 * 部署前请替换为 `npx wrangler kv namespace create SESSIONS` 返回的真实 id。
+	 * CI 部署前由 workflow 注入生产 id（见 .github/workflows/deploy.yml）。
 	 * 详见 docs/app-auth-setup.md
 	 */
-	"kv_namespaces": [{ "binding": "SESSIONS", "id": "00000000000000000000000000000000" }]
+	"kv_namespaces": [{ "binding": "SESSIONS", "id": "00000000000000000000000000000000" }],
+
+	/**
+	 * 生产运行配置（/api/config 下发前端）。⚠️ 唯一事实源：CI 的 wrangler deploy
+	 * 会以此处为准整体覆盖 Worker 的 plaintext vars——在 Cloudflare 面板临时加的
+	 * 变量会在下次部署被删（secrets 不受影响）。要改配置就改这里，别在面板加。
+	 * AUTH_DEV_BYPASS 仅 devnet MVP 演示用，接入 Google OAuth 后必须删除。
+	 */
+	"vars": {
+		"AUTH_DEV_BYPASS": "1",
+		"CLAIM_BASE_URL": "https://zkemail-connect-app.penghe1996.workers.dev/claim/",
+		"PROGRAM_ID": "9Bk8J1CK23pH6zB5CMNZZvNimTfGeeAaHxopNbjURfBR",
+		"RPC_URL": "https://api.devnet.solana.com"
+	}
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
