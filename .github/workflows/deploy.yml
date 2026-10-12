@@ -31,11 +31,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
-
-      # wrangler.json 里的 SESSIONS KV id 是本地 dev 占位值（见 docs/app-auth-setup.md），
-      # 部署前用生产 namespace id 替换
+      # wrangler.json 里的 SESSIONS KV id 是本地 dev 占位值（见 docs/app-auth-setup.md）。
+      # 必须在 build 之前注入：@cloudflare/vite-plugin 构建时会从 wrangler.json 派生
+      # dist/zkemail_connect_app/wrangler.json，而 wrangler deploy 实际读取的是派生配置
       - name: Inject production KV namespace id
         env:
           SESSIONS_KV_ID: ${{ secrets.SESSIONS_KV_ID }}
@@ -50,6 +48,9 @@ jobs:
             }
             fs.writeFileSync('wrangler.json', cfg.replace(PLACEHOLDER, process.env.SESSIONS_KV_ID));
           "
+
+      - name: Build
+        run: npm run build
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
