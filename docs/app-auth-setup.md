@@ -90,11 +90,17 @@ npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
 ```
 
-顺带确认**已有**的运行配置项也已就位（`/api/config` 依赖它们，与本次登录改动无关，
-但缺了页面会一直卡在 loading）：
+`RELAYER_EMAIL`、`RELAYER_X25519_PK_HEX` 同为 secrets，核对是否已存在：
 
-`PROGRAM_ID`、`RPC_URL`、`RELAYER_EMAIL`、`RELAYER_X25519_PK_HEX`、
-`CLAIM_BASE_URL`、`MINTS_JSON`（最后一项是 `[{mint,symbol,decimals}]` 的 JSON 字符串）。
+```bash
+npx wrangler secret list
+```
+
+其余运行配置项（`PROGRAM_ID`、`RPC_URL`、`CLAIM_BASE_URL`、`AUTH_DEV_BYPASS`、
+可选 `MINTS_JSON`）已作为 `vars` 维护在 `wrangler.json`——`/api/config` 依赖它们。
+⚠️ 不要在 Cloudflare 面板临时加变量：CI 的 `wrangler deploy` 会以 `wrangler.json`
+为准整体覆盖 plaintext vars，面板加的会在下次部署被删（dashboard 会提示
+"Update your Wrangler configuration…"）。要改就改 `wrangler.json` 提交部署。
 
 ### B5. 部署
 
