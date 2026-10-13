@@ -382,7 +382,7 @@ export default function SendPage() {
                 onClick={() => setMode(m)}
                 className={`px-3 py-1 rounded text-sm ${mode === m ? "bg-primary text-primary-foreground" : "bg-muted"}`}
               >
-                {m === "single" ? "Single" : "Batch airdrop"}
+                {m === "single" ? "Single" : "Batch"}
               </button>
             ))}
           </div>
