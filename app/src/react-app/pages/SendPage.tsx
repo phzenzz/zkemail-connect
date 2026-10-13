@@ -46,7 +46,7 @@ export default function SendPage() {
   // 优先走 Worker 代理 /api/wallet-tokens（Helius API key 只存后端，且公共 RPC 常禁用
   // getTokenAccountsByOwner）；后端未配 key（本地 validator 场景）时直连当前 RPC。
   const withTimeout = useCallback(<T,>(p: Promise<T>, ms: number, what: string) =>
-    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what}超时`)), ms))]), []);
+    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out`)), ms))]), []);
 
   const refreshTokens = useCallback(async () => {
     if (!publicKey || !config) {
@@ -58,7 +58,7 @@ export default function SendPage() {
       const decimalsByMint = new Map<string, number>();
       const held: { mint: PublicKey; amount: bigint }[] = [];
 
-      const proxyRes = await withTimeout(fetch(`/api/wallet-tokens/${publicKey.toBase58()}`), 15_000, "代币查询");
+      const proxyRes = await withTimeout(fetch(`/api/wallet-tokens/${publicKey.toBase58()}`), 15_000, "token lookup");
       if (proxyRes.ok) {
         const j = await proxyRes.json();
         for (const t of j.tokens ?? []) {
@@ -70,7 +70,7 @@ export default function SendPage() {
         const resp = await withTimeout(
           connection.getTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID }),
           15_000,
-          "代币查询",
+          "token lookup",
         );
         const direct = resp.value
           .map((v) => {
@@ -160,7 +160,7 @@ export default function SendPage() {
         const occupied = await (program.account as any).escrow.fetchNullable(candidatePda);
         if (!occupied) { nonce = candidate; escrowPda = candidatePda; break; }
       }
-      if (!nonce || !escrowPda) throw new Error("托管地址反复被占用，请重试");
+      if (!nonce || !escrowPda) throw new Error("Escrow address repeatedly occupied, please retry");
       const [protocolPda] = PublicKey.findProgramAddressSync([Buffer.from("protocol")], config.programId);
       const [relayerEntryPda] = PublicKey.findProgramAddressSync(
         [Buffer.from("relayer"), Buffer.from(relayerEmailHash)],
@@ -297,12 +297,12 @@ export default function SendPage() {
         }
         if (attempt === 0 && draft) window.localStorage.removeItem(draftKey); // sealed：同笔误重试，换新发一批
       }
-      if (!nonce || !batchPda) throw new Error("批次地址反复被占用，请重试");
+      if (!nonce || !batchPda) throw new Error("Batch address repeatedly occupied, please retry");
 
       const vault = getAssociatedTokenAddressSync(mintPk, batchPda, true);
 
       const uploaded = (existing?.recipientsCipher as Uint8Array | undefined)?.length ?? 0;
-      if (existing && uploaded > cipher.length) throw new Error("链上批次密文长度异常，批次状态与本次发送不匹配");
+      if (existing && uploaded > cipher.length) throw new Error("On-chain batch cipher length mismatch — batch state does not match this submission");
 
       const needCreate = !existing;
       const tail = cipher.subarray(uploaded);
@@ -369,7 +369,7 @@ export default function SendPage() {
         <CardHeader>
           <CardTitle>New transfer</CardTitle>
           <CardDescription>
-            发送后不可撤回。接收方无需有钱包,凭邮箱回复即可领取。
+            Transfers are final once sent. The recipient claims by simply replying to the email — no wallet or onboarding needed.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -382,7 +382,7 @@ export default function SendPage() {
                 onClick={() => setMode(m)}
                 className={`px-3 py-1 rounded text-sm ${mode === m ? "bg-primary text-primary-foreground" : "bg-muted"}`}
               >
-                {m === "single" ? "单发" : "批量空投"}
+                {m === "single" ? "Single" : "Batch"}
               </button>
             ))}
           </div>
@@ -399,11 +399,11 @@ export default function SendPage() {
                   <Button type="button" variant="outline" onClick={() => setRecipients(recipients.filter((_, j) => j !== i))}>−</Button>
                 </div>
               ))}
-              <Button type="button" variant="outline" onClick={() => setRecipients([...recipients, ""])}>+ 添加一行</Button>
+              <Button type="button" variant="outline" onClick={() => setRecipients([...recipients, ""])}>+ Add row</Button>
               <textarea
                 className="w-full border rounded p-2 bg-background text-sm"
                 rows={3}
-                placeholder="或粘贴邮箱列表（逗号/空格/换行分隔），粘贴即填充"
+                placeholder="Or paste an email list (separated by comma/space/newline) — fills in on paste"
                 value={pasteText}
                 onChange={(e) => {
                   setPasteText(e.target.value);
@@ -412,7 +412,7 @@ export default function SendPage() {
                 }}
               />
               <div className="space-y-2">
-                <Label>Expiry（days，过期后未领取部分可退款）</Label>
+                <Label>Expiry (days — unclaimed amounts become refundable after expiry)</Label>
                 <Input value={expiryDays} onChange={(e) => setExpiryDays(e.target.value)} placeholder="7" />
               </div>
             </div>
@@ -432,20 +432,20 @@ export default function SendPage() {
             >
               {tokenOptions.length === 0 && (
                 <option value="" disabled>
-                  {!publicKey ? "无可用代币" : tokensError ? "代币加载失败" : "此钱包暂无代币"}
+                  {!publicKey ? "No tokens available" : tokensError ? "Failed to load tokens" : "This wallet holds no tokens"}
                 </option>
               )}
               {tokenOptions.map((t) => (
                 <option key={t.mint} value={t.mint}>
                   {t.symbol}
-                  {t.balance !== undefined && ` · 余额 ${formatTokenAmount(t.balance, t.decimals)}`}
+                  {t.balance !== undefined && ` · balance ${formatTokenAmount(t.balance, t.decimals)}`}
                   {" "}({t.mint.slice(0, 8)}…)
                 </option>
               ))}
             </select>
             {publicKey && tokensError && (
               <p className="text-xs text-destructive">
-                代币加载失败：{tokensError}（未配 HELIUS_API_KEY 时当前 RPC 可能禁用了代币查询，请在 app/.dev.vars 配置后重启）
+                Failed to load tokens: {tokensError} (the current RPC may have token queries disabled when HELIUS_API_KEY is unset — set it in app/.dev.vars and restart)
               </p>
             )}
           </div>
@@ -454,7 +454,7 @@ export default function SendPage() {
             <Input id="amount" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="10" />
             {mint?.balance !== undefined && (
               <p className="text-xs text-muted-foreground">
-                钱包余额: {formatTokenAmount(mint.balance, mint.decimals)} {mint.symbol}
+                Wallet balance: {formatTokenAmount(mint.balance, mint.decimals)} {mint.symbol}
               </p>
             )}
           </div>
@@ -474,7 +474,7 @@ export default function SendPage() {
           {doneBatch && (
             <div className="text-sm space-y-1 border rounded p-3">
               <p>Batch: <code className="break-all">{doneBatch.batch}</code></p>
-              <p>Recipients: {doneBatch.count}（每人 {amount} {mint?.symbol}）</p>
+              <p>Recipients: {doneBatch.count} ({amount} {mint?.symbol} each)</p>
               <p>Claim link: <a className="underline break-all" href={doneBatch.claimUrl} target="_blank" rel="noreferrer">{doneBatch.claimUrl}</a></p>
             </div>
           )}

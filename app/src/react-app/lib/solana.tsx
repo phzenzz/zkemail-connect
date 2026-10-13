@@ -35,7 +35,7 @@ export function SolanaProviders({ children }: { children: ReactNode }) {
         // 表现为永久 "loading config…"，看不出真正原因。
         const missing = REQUIRED_CONFIG_FIELDS.filter((k) => !j[k]);
         if (missing.length > 0) {
-          throw new Error(`/api/config 缺少 ${missing.join(", ")} —— 检查 Worker 的 vars / app/.dev.vars`);
+          throw new Error(`/api/config is missing ${missing.join(", ")} — check Worker vars / app/.dev.vars`);
         }
         setConfig({
           programId: new PublicKey(j.programId),
@@ -100,11 +100,11 @@ export async function pollSignatureConfirmation(
     const { value } = await connection.getSignatureStatuses([signature]);
     const status = value[0];
     if (status) {
-      if (status.err) throw new Error(`交易链上执行失败: ${JSON.stringify(status.err)}`);
+      if (status.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
       const confirmationStatus = (status as { confirmationStatus?: string }).confirmationStatus;
       if (confirmationStatus === commitment || confirmationStatus === "finalized") return;
     }
-    if (Date.now() - start > timeoutMs) throw new Error("交易确认超时");
+    if (Date.now() - start > timeoutMs) throw new Error("Transaction confirmation timed out");
     await new Promise((r) => setTimeout(r, 2_000));
   }
 }

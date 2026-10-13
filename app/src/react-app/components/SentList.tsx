@@ -11,7 +11,7 @@ function amountText(entry: SentEntry, config: AppConfig): string {
   const meta = config.mints.find((m) => m.mint === entry.mint);
   const symbol = meta?.symbol ?? (entry.mint ? `${entry.mint.slice(0, 4)}…${entry.mint.slice(-4)}` : "");
   const amount = Number(entry.amountPer) / 10 ** (meta?.decimals ?? 0);
-  if (entry.kind === "batch") return `每人 ${amount} ${symbol} · 共 ${entry.count} 人`.trim();
+  if (entry.kind === "batch") return `${amount} ${symbol} each · ${entry.count} recipients`.trim();
   return `${amount} ${symbol}`.trim();
 }
 
@@ -19,32 +19,32 @@ function StatusBadge({ status }: { status: SentStatus }) {
   switch (status.state) {
     case "pending":
       return (
-        <Badge variant="secondary" title="资金仍在托管地址，等待对方凭邮箱领取">
-          待领取
+        <Badge variant="secondary" title="Funds remain in the escrow address, waiting for the recipient to claim via email">
+          Pending
         </Badge>
       );
     case "claimed":
       return (
-        <Badge variant="outline" title="对方已凭邮箱领取，托管账户已关闭">
-          已领取
+        <Badge variant="outline" title="The recipient claimed via email; the escrow account is closed">
+          Claimed
         </Badge>
       );
     case "closed":
       return (
-        <Badge variant="outline" title="批次已全部领完或过期退款，托管账户已关闭">
-          已关闭
+        <Badge variant="outline" title="Batch fully claimed or refunded after expiry; the escrow account is closed">
+          Closed
         </Badge>
       );
     case "open":
       if (!status.sealed)
         return (
-          <Badge variant="destructive" title="上传中断，批次未密封；重新发送同一收件人列表可断点续传">
-            未密封
+          <Badge variant="destructive" title="Upload interrupted before the batch was sealed — resend the same recipient list to resume">
+            Unsealed
           </Badge>
         );
       return (
-        <Badge variant="secondary" title="领取进度">
-          已领取 {status.claimed}/{status.count}
+        <Badge variant="secondary" title="Claim progress">
+          {status.claimed}/{status.count} claimed
         </Badge>
       );
   }
@@ -85,13 +85,13 @@ export default function SentList({ refreshNonce = 0 }: { refreshNonce?: number }
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <div>
-          <CardTitle>发送记录</CardTitle>
-          <CardDescription>链上解析本地址最近 {SEND_HISTORY_LIMIT} 笔交易，时间倒序。</CardDescription>
+          <CardTitle>Sent history</CardTitle>
+          <CardDescription>Parsed on-chain from this address's latest {SEND_HISTORY_LIMIT} transactions, newest first.</CardDescription>
         </div>
         <Button
           variant="ghost"
           size="icon"
-          aria-label="刷新发送记录"
+          aria-label="Refresh sent history"
           disabled={loading || !publicKey}
           onClick={() => void refresh()}
         >
@@ -99,28 +99,28 @@ export default function SentList({ refreshNonce = 0 }: { refreshNonce?: number }
         </Button>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {!publicKey && <p className="text-muted-foreground">连接钱包后显示发送记录。</p>}
+        {!publicKey && <p className="text-muted-foreground">Connect a wallet to see your sent history.</p>}
 
-        {publicKey && loading && entries === null && <p className="text-muted-foreground">解析链上交易中…</p>}
+        {publicKey && loading && entries === null && <p className="text-muted-foreground">Parsing on-chain transactions…</p>}
 
         {publicKey && error && (
           <div className="space-y-2">
-            <p className="text-destructive">发送记录加载失败：{error}</p>
+            <p className="text-destructive">Failed to load sent history: {error}</p>
             <Button variant="outline" size="sm" onClick={() => void refresh()}>
-              重试
+              Retry
             </Button>
           </div>
         )}
 
         {publicKey && entries !== null && entries.length === 0 && !loading && (
-          <p className="text-muted-foreground">暂无发送记录。</p>
+          <p className="text-muted-foreground">No sent history yet.</p>
         )}
 
         {entries?.map((entry) => (
           <div key={entry.pda} className="space-y-1 border-b pb-3 last:border-b-0 last:pb-0">
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
-                <Badge variant="outline">{entry.kind === "escrow" ? "单发" : "批量"}</Badge>
+                <Badge variant="outline">{entry.kind === "escrow" ? "Single" : "Batch"}</Badge>
                 <span className="truncate">{amountText(entry, config)}</span>
               </div>
               <StatusBadge status={entry.status} />
@@ -131,11 +131,11 @@ export default function SentList({ refreshNonce = 0 }: { refreshNonce?: number }
                 href={`${config.claimBaseUrl}${entry.pda}`}
                 target="_blank"
                 rel="noreferrer"
-                title={`托管地址：${entry.pda}`}
+                title={`Escrow address: ${entry.pda}`}
               >
                 {entry.pda.slice(0, 8)}…{entry.pda.slice(-8)}
               </a>
-              <span>{entry.createdAt ? new Date(entry.createdAt * 1000).toLocaleString() : "时间未知"}</span>
+              <span>{entry.createdAt ? new Date(entry.createdAt * 1000).toLocaleString() : "Time unknown"}</span>
             </div>
           </div>
         ))}
